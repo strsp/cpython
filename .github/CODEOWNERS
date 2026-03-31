@@ -1,274 +1,656 @@
 # See https://help.github.com/articles/about-codeowners/
-# for more info about CODEOWNERS file
+# for further details about the .github/CODEOWNERS file.
 
 # It uses the same pattern rule for gitignore file
 # https://git-scm.com/docs/gitignore#_pattern_format
+# Notably, a later match overrides earlier matches, so order matters.
+# If using a wildcard pattern, try to be as specific as possible to avoid
+# matching unintended files or overriding previous entries.
+# To exclude a file from ownership, add a line with only the file.
+# See the exclusions section at the end of the file for examples.
 
-# GitHub
-.github/**                    @ezio-melotti @hugovk @webknjaz
+# =======
+# Purpose
+# =======
+#
+# An entry in this file does not imply 'ownership', despite the name of the
+# file, but instead that those listed take an interest in that part of the
+# project and will automatically be added as reviewers to PRs that affect
+# the matching files.
+# See also the Experts Index in the Python Developer's Guide:
+# https://devguide.python.org/core-developers/experts/
+#
+# =========
+# Structure
+# =========
+#
+# The CODEOWNERS file is organised by topic area.
+# Please add new entries in alphabetical order within the relevant section.
+# Where possible, keep related files together. For example, documentation,
+# code, and tests for a given item should all be listed in the same place.
+#
+# GitHub usernames should be aligned to column 31, or the next multiple
+# of three if the relevant paths are too long to fit.
+#
+# Top-level sections are:
+#
+# * Buildbots, Continuous Integration, and Testing
+#     project-wide configuration files, internal tools for use in CI,
+#     linting.
+# * Build System
+#     the Makefile, autoconf, and other autotools files.
+# * Documentation
+#     broader sections of documentation, documentation tools
+# * Internal Tools & Data
+#     internal tools, integration with external systems,
+#     entries that don't fit elsewhere
+# * Platform Support
+#     relating to support for specific platforms
+# * Interpreter Core
+#     the grammar, parser, compiler, interpreter, etc.
+# * Standard Library
+#     standard library modules (from both Lib and Modules)
+#     and related files (such as their tests and docs)
+# * Exclusions
+#     exclusions from .github/CODEOWNERS should go at the very end
+#     because the final matching pattern will take precedence.
 
-# pre-commit
-.pre-commit-config.yaml       @hugovk
-.ruff.toml                    @hugovk @AlexWaygood
+# ----------------------------------------------------------------------------
+# Buildbots, Continuous Integration, and Testing
+# ----------------------------------------------------------------------------
 
-# Build system
-configure*                    @erlend-aasland @corona10
+# Azure Pipelines
+.azure-pipelines/ @strsp/core-dev
 
-# asyncio
-**/*asyncio*                  @1st1 @asvetlov @gvanrossum @kumaraditya303 @willingc
+# GitHub & related scripts
+.github/ @strsp/core-dev
+Tools/build/compute-changes.py @strsp/core-dev
+Lib/test/test_tools/test_compute_changes.py @strsp/core-dev
+Tools/build/verify_ensurepip_wheels.py @strsp/core-dev
 
-# Core
-**/*context*                  @1st1
-**/*genobject*                @markshannon
-**/*hamt*                     @1st1
-**/*jit*                      @brandtbucher
-Python/perf_jit_trampoline.c  # Exclude the owners of "**/*jit*", above.
-Objects/set*                  @rhettinger
-Objects/dict*                 @methane @markshannon
-Objects/typevarobject.c       @JelleZijlstra
-Objects/type*                 @markshannon
-Objects/codeobject.c          @markshannon
-Objects/frameobject.c         @markshannon
-Objects/call.c                @markshannon
-Python/ceval*.c               @markshannon
-Python/ceval*.h               @markshannon
-Python/compile.c              @markshannon @iritkatriel
-Python/assemble.c             @markshannon @iritkatriel
-Python/flowgraph.c            @markshannon @iritkatriel
-Python/ast_opt.c              @isidentical
-Python/bytecodes.c            @markshannon
-Python/optimizer*.c           @markshannon
-Python/optimizer_analysis.c   @Fidget-Spinner
-Python/optimizer_bytecodes.c  @Fidget-Spinner
-Lib/test/test_patma.py        @brandtbucher
-Lib/test/test_type_*.py       @JelleZijlstra
-Lib/test/test_capi/test_misc.py  @markshannon
-Tools/c-analyzer/             @ericsnowcurrently
-Tools/check-c-api-docs/       @ZeroIntensity
+# Pre-commit
+.pre-commit-config.yaml @strsp/core-dev
+.ruff.toml @strsp/core-dev
 
-# dbm
-**/*dbm*                      @corona10 @erlend-aasland @serhiy-storchaka
+# Patchcheck
+Tools/patchcheck/ @strsp/core-dev
 
-# runtime state/lifecycle
-**/*pylifecycle*              @ericsnowcurrently
-**/*pystate*                  @ericsnowcurrently
-**/*preconfig*                @ericsnowcurrently
-**/*initconfig*               @ericsnowcurrently
-**/*pathconfig*               @ericsnowcurrently
-**/*sysmodule*                @ericsnowcurrently
-**/*bltinmodule*              @ericsnowcurrently
-**/*gil*                      @ericsnowcurrently
-Include/internal/pycore_runtime.h   @ericsnowcurrently
-Include/internal/pycore_interp.h    @ericsnowcurrently
-Include/internal/pycore_tstate.h    @ericsnowcurrently
-Include/internal/pycore_*_state.h   @ericsnowcurrently
-Include/internal/pycore_*_init.h    @ericsnowcurrently
-Include/internal/pycore_atexit.h    @ericsnowcurrently
-Include/internal/pycore_freelist.h  @ericsnowcurrently
-Include/internal/pycore_global_objects.h  @ericsnowcurrently
-Include/internal/pycore_obmalloc.h  @ericsnowcurrently
-Include/internal/pycore_pymem.h     @ericsnowcurrently
-Modules/main.c                @ericsnowcurrently
-Programs/_bootstrap_python.c  @ericsnowcurrently
-Programs/python.c             @ericsnowcurrently
-Tools/build/generate_global_objects.py  @ericsnowcurrently
 
-# Exceptions
-Lib/traceback.py              @iritkatriel
-Lib/test/test_except*.py      @iritkatriel
-Lib/test/test_traceback.py    @iritkatriel
-Objects/exceptions.c          @iritkatriel
-Python/traceback.c            @iritkatriel
+# ----------------------------------------------------------------------------
+# Build System
+# ----------------------------------------------------------------------------
 
-# Hashing
-**/*hashlib*                  @gpshead @tiran
-**/*pyhash*                   @gpshead @tiran
-**/sha*                       @gpshead @tiran
-Modules/md5*                  @gpshead @tiran
-**/*blake*                    @gpshead @tiran
-Modules/_blake2/**            @gpshead @tiran
-Modules/_hacl/**              @gpshead
+# Autotools
+configure* @strsp/core-dev
+Makefile.pre.in @strsp/core-dev
+Modules/makesetup @strsp/core-dev
+Modules/Setup* @strsp/core-dev
+Tools/build/regen-configure.sh @strsp/core-dev
 
-# logging
-**/*logging*                  @vsajip
+# generate-build-details
+Tools/build/generate-build-details.py @strsp/core-dev
+Lib/test/test_build_details.py @strsp/core-dev
 
-# venv
-**/*venv*                     @vsajip
 
-# Launcher
-/PC/launcher.c                @vsajip
+# ----------------------------------------------------------------------------
+# Documentation
+# ----------------------------------------------------------------------------
 
-# HTML
-/Lib/html/                    @ezio-melotti
-/Lib/_markupbase.py           @ezio-melotti
-/Lib/test/test_html*.py       @ezio-melotti
-/Tools/build/parse_html5_entities.py   @ezio-melotti
+# Internal Docs
+InternalDocs/ @strsp/core-dev
 
-# Import (including importlib).
-**/*import*                   @brettcannon @ericsnowcurrently @ncoghlan @warsaw
-/Python/import.c              @kumaraditya303
-Python/dynload_*.c            @ericsnowcurrently
-**/*freeze*                   @ericsnowcurrently
-**/*frozen*                   @ericsnowcurrently
-**/*modsupport*               @ericsnowcurrently
-**/*modulefinder*             @ericsnowcurrently
-**/*moduleobject*             @ericsnowcurrently
-**/*multiphase*               @ericsnowcurrently
-**/*pkgutil*                  @ericsnowcurrently
-**/*pythonrun*                @ericsnowcurrently
-**/*runpy*                    @ericsnowcurrently
-**/*singlephase*              @ericsnowcurrently
-Lib/test/test_module/         @ericsnowcurrently
-Doc/c-api/module.rst          @ericsnowcurrently
-**/*importlib/resources/*     @jaraco @warsaw @FFY00
-**/*importlib/metadata/*       @jaraco @warsaw
+# Tools, Configuration, etc
+Doc/Makefile @strsp/core-dev
+Doc/_static/ @strsp/core-dev
+Doc/conf.py @strsp/core-dev
+Doc/make.bat @strsp/core-dev
+Doc/requirements.txt @strsp/core-dev
+Doc/tools/ @strsp/core-dev
 
-# Dates and times
-**/*datetime*                 @pganssle @abalkin
-**/*str*time*                 @pganssle @abalkin
-Doc/library/time.rst          @pganssle @abalkin
-Lib/test/test_time.py         @pganssle @abalkin
-Modules/timemodule.c          @pganssle @abalkin
-Python/pytime.c               @pganssle @abalkin
-Include/internal/pycore_time.h  @pganssle @abalkin
+# PR Previews
+.readthedocs.yml @strsp/core-dev
 
-# Email and related
-**/*mail*                     @python/email-team
-**/*smtp*                     @python/email-team
-**/*mime*                     @python/email-team
-**/*imap*                     @python/email-team
-**/*poplib*                   @python/email-team
+# Sections
+Doc/c-api/ @strsp/core-dev
+Doc/reference/ @strsp/core-dev
+Doc/whatsnew/ @strsp/core-dev
 
-# Garbage collector
-/Modules/gcmodule.c           @pablogsal
-/Doc/library/gc.rst           @pablogsal
 
-# Parser
-/Parser/                      @pablogsal @lysnikolaou
-/Tools/peg_generator/         @pablogsal @lysnikolaou
-/Lib/test/test_peg_generator/ @pablogsal @lysnikolaou
-/Grammar/python.gram          @pablogsal @lysnikolaou
-/Lib/tokenize.py              @pablogsal @lysnikolaou
-/Lib/test/test_tokenize.py    @pablogsal @lysnikolaou
-
-# Code generator
-/Tools/cases_generator/        @markshannon
-
-# AST
-Python/ast.c                  @isidentical
-Parser/asdl.py                @isidentical
-Parser/asdl_c.py              @isidentical
-Lib/ast.py                    @isidentical
-
-# Mock
-/Lib/unittest/mock.py         @cjw296
-/Lib/test/test_unittest/testmock/* @cjw296
-
-# multiprocessing
-**/*multiprocessing*          @gpshead
-
-# SQLite 3
-**/*sqlite*                   @berkerpeksag @erlend-aasland
-
-# subprocess
-/Lib/subprocess.py            @gpshead
-/Lib/test/test_subprocess.py  @gpshead
-/Modules/*subprocess*         @gpshead
-
-# Limited C API & stable ABI
-Tools/build/stable_abi.py     @encukou
-Misc/stable_abi.toml          @encukou
-Doc/data/*.abi                @encukou
-Doc/c-api/stable.rst          @encukou
-
-# Windows
-/PC/                          @python/windows-team
-/PCbuild/                     @python/windows-team
-
-# Urllib
-**/*robotparser*              @berkerpeksag
-
-# Windows installer packages
-/Tools/msi/                   @python/windows-team
-/Tools/nuget/                 @python/windows-team
-
-# Misc
-**/*itertools*                @rhettinger
-**/*collections*              @rhettinger
-**/*random*                   @rhettinger
-**/*bisect*                   @rhettinger
-**/*heapq*                    @rhettinger
-**/*functools*                @rhettinger
-**/*decimal*                  @rhettinger
-
-**/*dataclasses*              @ericvsmith
-
-**/*ensurepip*                @pfmoore @pradyunsg
-
-**/*idlelib*                  @terryjreedy
-/Doc/library/idle.rst         @terryjreedy
-
-**/*typing*                   @JelleZijlstra @AlexWaygood
-
-**/*ftplib                    @giampaolo
-**/*shutil                    @giampaolo
-
-**/*enum*                     @ethanfurman
-**/*cgi*                      @ethanfurman
-**/*tarfile*                  @ethanfurman
-
-**/*tomllib*                  @encukou @hauntsaninja
-
-**/*sysconfig*                @FFY00
-
-**/*cjkcodecs*                @corona10
-
-# macOS
-/Mac/                         @python/macos-team
-**/*osx_support*              @python/macos-team
-
-# pathlib
-**/*pathlib*                  @barneygale
-
-# zipfile.Path
-**/*zipfile/_path/*           @jaraco
+# ----------------------------------------------------------------------------
+# Internal Tools and Data
+# ----------------------------------------------------------------------------
 
 # Argument Clinic
-/Tools/clinic/**              @erlend-aasland
-/Lib/test/test_clinic.py      @erlend-aasland
-Doc/howto/clinic.rst          @erlend-aasland
+Tools/clinic/ @strsp/core-dev
+Lib/test/test_clinic.py @strsp/core-dev
+Doc/howto/clinic.rst @strsp/core-dev
 
-# Subinterpreters
-**/*interpreteridobject.*     @ericsnowcurrently
-**/*crossinterp*              @ericsnowcurrently
-Lib/test/support/interpreters/  @ericsnowcurrently
-Modules/_interp*module.c      @ericsnowcurrently
-Lib/test/test_interpreters/   @ericsnowcurrently
+# C Analyser
+Tools/c-analyzer/ @strsp/core-dev
 
-# Android
-**/*Android*                  @mhsmith @freakboy3742
-**/*android*                  @mhsmith @freakboy3742
+# C API Documentation Checks
+Tools/check-c-api-docs/ @strsp/core-dev
 
-# iOS (but not termios)
-**/iOS*                       @freakboy3742
-**/ios*                       @freakboy3742
-**/*_iOS*                     @freakboy3742
-**/*_ios*                     @freakboy3742
-**/*-iOS*                     @freakboy3742
-**/*-ios*                     @freakboy3742
+# Fuzzing
+Modules/_xxtestfuzz/ @strsp/core-dev
+Lib/test/test_xxtestfuzz.py @strsp/core-dev
+.github/workflows/reusable-cifuzz.yml @strsp/core-dev
 
-# WebAssembly
-/Tools/wasm/                  @brettcannon
+# Limited C API & Stable ABI
+Doc/c-api/stable.rst @strsp/core-dev
+Doc/data/*.abi @strsp/core-dev
+Misc/stable_abi.toml @strsp/core-dev
+Tools/build/stable_abi.py @strsp/core-dev
 
 # SBOM
-/Misc/externals.spdx.json     @sethmlarson
-/Misc/sbom.spdx.json          @sethmlarson
-/Tools/build/generate_sbom.py @sethmlarson
+Misc/externals.spdx.json @strsp/core-dev
+Misc/sbom.spdx.json @strsp/core-dev
+Tools/build/generate_sbom.py @strsp/core-dev
 
-# Config Parser
-Lib/configparser.py           @jaraco
-Lib/test/test_configparser.py @jaraco
+# ABI check
+Misc/libabigail.abignore @strsp/core-dev
+
+
+# ----------------------------------------------------------------------------
+# Platform Support
+# ----------------------------------------------------------------------------
+
+# Android
+Android/ @strsp/core-dev
+Doc/using/android.rst @strsp/core-dev
+Lib/_android_support.py @strsp/core-dev
+Lib/test/test_android.py @strsp/core-dev
+
+# iOS
+Doc/using/ios.rst @strsp/core-dev
+Lib/_ios_support.py @strsp/core-dev
+Apple/ @strsp/core-dev
+iOS/ @strsp/core-dev
+
+# macOS
+Mac/ @strsp/core-dev
+Lib/_osx_support.py @strsp/core-dev
+Lib/test/test__osx_support.py @strsp/core-dev
+
+# WebAssembly
+Tools/wasm/README.md @strsp/core-dev
+
+# WebAssembly (Emscripten)
+Tools/wasm/config.site-wasm32-emscripten @strsp/core-dev
+Tools/wasm/emscripten @strsp/core-dev
+
+# WebAssembly (WASI)
+Platforms/WASI @strsp/core-dev
+Tools/wasm/wasi-env @strsp/core-dev
+Tools/wasm/wasi.py @strsp/core-dev
+Tools/wasm/wasi @strsp/core-dev
+
+# Windows
+PC/ @strsp/core-dev
+PCbuild/ @strsp/core-dev
+
+# Windows installer packages
+Tools/msi/ @strsp/core-dev
+Tools/nuget/ @strsp/core-dev
+
+# Windows Launcher
+PC/launcher.c @strsp/core-dev
+
+
+# ----------------------------------------------------------------------------
+# Interpreter Core
+# ----------------------------------------------------------------------------
+
+# AST
+Lib/_ast_unparse.py @strsp/core-dev
+Lib/ast.py @strsp/core-dev
+Lib/test/test_ast/ @strsp/core-dev
+Parser/asdl.py @strsp/core-dev
+Parser/asdl_c.py @strsp/core-dev
+Python/ast.c @strsp/core-dev
+Python/ast_preprocess.c @strsp/core-dev
+
+# Built-in types
+Objects/call.c @strsp/core-dev
+Objects/codeobject.c @strsp/core-dev
+Objects/dict* @strsp/core-dev
+Objects/frameobject.c @strsp/core-dev
+**/*genobject* @strsp/core-dev
+Objects/object.c @strsp/core-dev
+Objects/set* @strsp/core-dev
+Objects/type* @strsp/core-dev
+Objects/typevarobject.c @strsp/core-dev
+Objects/unionobject.c @strsp/core-dev
+
+# Byte code interpreter ('the eval loop')
+Python/bytecodes.c @strsp/core-dev
+Python/ceval* @strsp/core-dev
+Tools/cases_generator/ @strsp/core-dev
+
+# Compiler (AST to byte code)
+Python/assemble.c @strsp/core-dev
+Python/codegen.c @strsp/core-dev
+Python/compile.c @strsp/core-dev
+Python/flowgraph.c @strsp/core-dev
+Python/instruction_sequence.c @strsp/core-dev
+Python/symtable.c @strsp/core-dev
+
+# Context variables & HAMT
+**/contextvars* @strsp/core-dev
+**/*hamt* @strsp/core-dev
+Include/cpython/context.h @strsp/core-dev
+Include/internal/pycore_context.h @strsp/core-dev
+Lib/test/test_context.py @strsp/core-dev
+Python/context.c @strsp/core-dev
+
+# Core Modules
+**/*bltinmodule* @strsp/core-dev
+**/*sysmodule* @strsp/core-dev
+
+# Exceptions
+Lib/test/test_except*.py @strsp/core-dev
+Objects/exceptions.c @strsp/core-dev
+
+# Getpath
+Lib/test/test_getpath.py @strsp/core-dev
+Modules/getpath* @strsp/core-dev
+
+# Hashing / ``hash()`` and related
+Include/cpython/pyhash.h @strsp/core-dev
+Include/internal/pycore_pyhash.h @strsp/core-dev
+Include/pyhash.h @strsp/core-dev
+Python/pyhash.c @strsp/core-dev
+
+# The import system (including importlib)
+**/*import* @strsp/core-dev
+Python/import.c @strsp/core-dev
+**/*freeze* @strsp/core-dev
+**/*frozen* @strsp/core-dev
+**/*modsupport* @strsp/core-dev
+**/*modulefinder* @strsp/core-dev
+**/*moduleobject* @strsp/core-dev
+**/*multiphase* @strsp/core-dev
+**/*pkgutil* @strsp/core-dev
+**/*pythonrun* @strsp/core-dev
+**/*runpy* @strsp/core-dev
+**/*singlephase* @strsp/core-dev
+Doc/c-api/module.rst @strsp/core-dev
+Lib/test/test_module/ @strsp/core-dev
+Python/dynload_*.c @strsp/core-dev
+
+# Initialisation
+**/*initconfig* @strsp/core-dev
+**/*pathconfig* @strsp/core-dev
+**/*preconfig* @strsp/core-dev
+Doc/library/sys_path_init.rst @strsp/core-dev
+Doc/c-api/init_config.rst @strsp/core-dev
+
+# Interpreter main program
+Modules/main.c @strsp/core-dev
+Programs/_bootstrap_python.c @strsp/core-dev
+Programs/python.c @strsp/core-dev
+
+# JIT
+.github/workflows/jit.yml @strsp/core-dev
+Include/internal/pycore_jit.h @strsp/core-dev
+Python/jit.c @strsp/core-dev
+Tools/jit/ @strsp/core-dev
+InternalDocs/jit.md @strsp/core-dev
+
+# Lazy imports (PEP 810)
+Objects/lazyimportobject.c @strsp/core-dev
+Include/internal/pycore_lazyimportobject.h @strsp/core-dev
+Lib/test/test_lazy_import @strsp/core-dev
+
+# Micro-op / μop / Tier 2 Optimiser
+Python/optimizer.c @strsp/core-dev
+Python/optimizer_analysis.c @strsp/core-dev
+Python/optimizer_bytecodes.c @strsp/core-dev
+Python/optimizer_symbols.c @strsp/core-dev
+
+# Parser, Lexer, and Grammar
+Grammar/python.gram @strsp/core-dev
+Lib/test/test_peg_generator/ @strsp/core-dev
+Lib/test/test_tokenize.py @strsp/core-dev
+Lib/tokenize.py @strsp/core-dev
+Parser/ @strsp/core-dev
+Tools/peg_generator/ @strsp/core-dev
+
+# Runtime state/lifecycle
+**/*gil* @strsp/core-dev
+**/*pylifecycle* @strsp/core-dev
+**/*pystate* @strsp/core-dev
+Include/internal/pycore_*_init.h @strsp/core-dev
+Include/internal/pycore_*_state.h @strsp/core-dev
+Include/internal/pycore_atexit.h @strsp/core-dev
+Include/internal/pycore_freelist.h @strsp/core-dev
+Include/internal/pycore_global_objects.h @strsp/core-dev
+Include/internal/pycore_interp.h @strsp/core-dev
+Include/internal/pycore_obmalloc.h @strsp/core-dev
+Include/internal/pycore_pymem.h @strsp/core-dev
+Include/internal/pycore_runtime.h @strsp/core-dev
+Include/internal/pycore_stackref.h @strsp/core-dev
+Include/internal/pycore_tstate.h @strsp/core-dev
+Tools/build/generate_global_objects.py @strsp/core-dev
+
+# Remote Debugging
+Python/remote_debug.h @strsp/core-dev
+Python/remote_debugging.c @strsp/core-dev
+Modules/_remote_debugging/ @strsp/core-dev
+
+# Sub-Interpreters
+**/*crossinterp* @strsp/core-dev
+**/*interpreteridobject.* @strsp/core-dev
+Doc/library/concurrent.interpreters.rst @strsp/core-dev
+Lib/concurrent/futures/interpreter.py @strsp/core-dev
+Lib/concurrent/interpreters/ @strsp/core-dev
+Lib/test/support/channels.py @strsp/core-dev
+Lib/test/test__interp*.py @strsp/core-dev
+Lib/test/test_interpreters/ @strsp/core-dev
+Modules/_interp*module.c @strsp/core-dev
+
+# Template string literals (t-strings)
+Lib/test/test_tstring.py @strsp/core-dev
+Objects/interpolationobject.c @strsp/core-dev
+Objects/templateobject.c @strsp/core-dev
+
+# Tests
+Lib/test/test_patma.py @strsp/core-dev
+Lib/test/test_type_*.py @strsp/core-dev
+Lib/test/test_capi/test_misc.py @strsp/core-dev
+
+
+# ----------------------------------------------------------------------------
+# Standard Library
+# ----------------------------------------------------------------------------
+
+# Annotationlib
+Doc/library/annotationlib.rst @strsp/core-dev
+Lib/annotationlib.py @strsp/core-dev
+Lib/test/test_annotationlib.py @strsp/core-dev
+
+# Argparse
+Doc/**/argparse*.rst @strsp/core-dev
+Lib/argparse.py @strsp/core-dev
+Lib/test/test_argparse.py @strsp/core-dev
+
+# Asyncio
+Doc/library/asyncio*.rst @strsp/core-dev
+InternalDocs/asyncio.md @strsp/core-dev
+Lib/asyncio/ @strsp/core-dev
+Lib/test/test_asyncio/ @strsp/core-dev
+Modules/_asynciomodule.c @strsp/core-dev
+
+# Bisect
+Doc/library/bisect.rst @strsp/core-dev
+Lib/bisect.py @strsp/core-dev
+Lib/test/test_bisect.py @strsp/core-dev
+Modules/_bisectmodule.c @strsp/core-dev
+
+# Calendar
+Lib/calendar.py @strsp/core-dev
+Lib/test/test_calendar.py @strsp/core-dev
+
+# Cryptographic Primitives and Applications
+**/*hashlib* @strsp/core-dev
+**/*hashopenssl* @strsp/core-dev
+**/*hmac* @strsp/core-dev
+**/*ssl* @strsp/core-dev
+Modules/_hacl/ @strsp/core-dev
+Modules/*blake* @strsp/core-dev
+Modules/*md5* @strsp/core-dev
+Modules/*sha* @strsp/core-dev
+
+# Codecs
+Modules/cjkcodecs/ @strsp/core-dev
+Tools/unicode/gencjkcodecs.py @strsp/core-dev
+
+# Collections
+Doc/library/collections.abc.rst @strsp/core-dev
+Doc/library/collections.rst @strsp/core-dev
+Lib/_collections_abc.py @strsp/core-dev
+Lib/collections/ @strsp/core-dev
+Lib/test/test_collections.py @strsp/core-dev
+Modules/_collectionsmodule.c @strsp/core-dev
 
 # Colorize
-Lib/_colorize.py              @hugovk
-Lib/test/test__colorize.py    @hugovk
+Lib/_colorize.py @strsp/core-dev
+Lib/test/test__colorize.py @strsp/core-dev
+
+# Config Parser
+Lib/configparser.py @strsp/core-dev
+Lib/test/test_configparser.py @strsp/core-dev
+
+# Dataclasses
+Doc/library/dataclasses.rst @strsp/core-dev
+Lib/dataclasses.py @strsp/core-dev
+Lib/test/test_dataclasses/ @strsp/core-dev
+
+# Dates and times
+Doc/**/*time.rst @strsp/core-dev
+Doc/library/datetime-* @strsp/core-dev
+Doc/library/zoneinfo.rst @strsp/core-dev
+Include/datetime.h @strsp/core-dev
+Include/internal/pycore_time.h @strsp/core-dev
+Lib/test/test_zoneinfo/ @strsp/core-dev
+Lib/zoneinfo/ @strsp/core-dev
+Lib/*time.py @strsp/core-dev
+Lib/test/datetimetester.py @strsp/core-dev
+Lib/test/test_*time.py @strsp/core-dev
+Modules/*zoneinfo* @strsp/core-dev
+Modules/*time* @strsp/core-dev
+Python/pytime.c @strsp/core-dev
+
+# Dbm
+Doc/library/dbm.rst @strsp/core-dev
+Lib/dbm/ @strsp/core-dev
+Lib/test/test_dbm*.py @strsp/core-dev
+Modules/*dbm* @strsp/core-dev
+
+# Email and related
+**/*mail* @strsp/core-dev
+**/*smtp* @strsp/core-dev
+**/*mime* @strsp/core-dev
+**/*imap* @strsp/core-dev
+**/*poplib* @strsp/core-dev
+
+# Ensurepip
+Doc/library/ensurepip.rst @strsp/core-dev
+Lib/ensurepip/ @strsp/core-dev
+Lib/test/test_ensurepip.py @strsp/core-dev
+
+# Enum
+Doc/howto/enum.rst @strsp/core-dev
+Doc/library/enum.rst @strsp/core-dev
+Lib/enum.py @strsp/core-dev
+Lib/test/test_enum.py @strsp/core-dev
+Lib/test/test_json/test_enum.py @strsp/core-dev
+
+# FTP
+Doc/library/ftplib.rst @strsp/core-dev
+Lib/ftplib.py @strsp/core-dev
+Lib/test/test_ftplib.py @strsp/core-dev
+
+# Functools
+Doc/library/functools.rst @strsp/core-dev
+Lib/functools.py @strsp/core-dev
+Lib/test/test_functools.py @strsp/core-dev
+Modules/_functoolsmodule.c @strsp/core-dev
+
+# Garbage collector
+Modules/gcmodule.c @strsp/core-dev
+Doc/library/gc.rst @strsp/core-dev
+InternalDocs/garbage_collector.md @strsp/core-dev
+
+# Gettext
+Doc/library/gettext.rst @strsp/core-dev
+Lib/gettext.py @strsp/core-dev
+Lib/test/test_gettext.py @strsp/core-dev
+Tools/i18n/pygettext.py @strsp/core-dev
+
+# Heapq
+Doc/library/heapq* @strsp/core-dev
+Lib/heapq.py @strsp/core-dev
+Lib/test/test_heapq.py @strsp/core-dev
+Modules/_heapqmodule.c @strsp/core-dev
+
+# HTML
+Doc/library/html* @strsp/core-dev
+Lib/html/ @strsp/core-dev
+Lib/_markupbase.py @strsp/core-dev
+Lib/test/test_html*.py @strsp/core-dev
+Tools/build/parse_html5_entities.py @strsp/core-dev
+
+# IDLE
+Doc/library/idle.rst @strsp/core-dev
+Lib/idlelib/ @strsp/core-dev
+Lib/turtledemo/ @strsp/core-dev
+
+# importlib.metadata
+Doc/library/importlib.metadata.rst @strsp/core-dev
+Lib/importlib/metadata/ @strsp/core-dev
+Lib/test/test_importlib/metadata/ @strsp/core-dev
+
+# importlib.resources
+Doc/library/importlib.resources.abc.rst @strsp/core-dev
+Doc/library/importlib.resources.rst @strsp/core-dev
+Lib/importlib/resources/ @strsp/core-dev
+Lib/test/test_importlib/resources/ @strsp/core-dev
+
+# Itertools
+Doc/library/itertools.rst @strsp/core-dev
+Lib/test/test_itertools.py @strsp/core-dev
+Modules/itertoolsmodule.c @strsp/core-dev
+
+# Logging
+Doc/**/logging* @strsp/core-dev
+Lib/logging/ @strsp/core-dev
+Lib/test/test_logging.py @strsp/core-dev
+
+# Multiprocessing
+Doc/library/multiprocessing*.rst @strsp/core-dev
+Lib/multiprocessing/ @strsp/core-dev
+Lib/test/*multiprocessing.py @strsp/core-dev
+Lib/test/test_multiprocessing*/ @strsp/core-dev
+Modules/_multiprocessing/ @strsp/core-dev
+
+# Pathlib
+Doc/library/pathlib.rst @strsp/core-dev
+Lib/pathlib/ @strsp/core-dev
+Lib/test/test_pathlib/ @strsp/core-dev
+
+# Pdb & Bdb
+Doc/library/bdb.rst @strsp/core-dev
+Doc/library/pdb.rst @strsp/core-dev
+Lib/bdb.py @strsp/core-dev
+Lib/pdb.py @strsp/core-dev
+Lib/test/test_bdb.py @strsp/core-dev
+Lib/test/test_pdb.py @strsp/core-dev
+Lib/test/test_remote_pdb.py @strsp/core-dev
+
+# Pydoc
+Lib/pydoc.py @strsp/core-dev
+Lib/pydoc_data/ @strsp/core-dev
+Lib/test/test_pydoc/ @strsp/core-dev
+
+# Profiling (Sampling)
+Doc/library/profiling*.rst @strsp/core-dev
+Lib/profiling/ @strsp/core-dev
+Lib/test/test_profiling/ @strsp/core-dev
+
+# PyREPL
+Lib/_pyrepl/ @strsp/core-dev
+Lib/test/test_pyrepl/ @strsp/core-dev
+
+# Random
+Doc/library/random.rst @strsp/core-dev
+Lib/random.py @strsp/core-dev
+Lib/test/test_random.py @strsp/core-dev
+Modules/_randommodule.c @strsp/core-dev
+
+# Shutil
+Doc/library/shutil.rst @strsp/core-dev
+Lib/shutil.py @strsp/core-dev
+Lib/test/test_shutil.py @strsp/core-dev
+
+# Site
+Lib/site.py @strsp/core-dev
+Lib/test/test_site.py @strsp/core-dev
+Doc/library/site.rst @strsp/core-dev
+
+# string.templatelib
+Doc/library/string.templatelib.rst @strsp/core-dev
+Lib/string/templatelib.py @strsp/core-dev
+Lib/test/test_string/test_templatelib.py @strsp/core-dev
+
+# Sysconfig
+**/*sysconfig* @strsp/core-dev
+
+# SQLite 3
+Doc/library/sqlite3.rst @strsp/core-dev
+Lib/sqlite3/ @strsp/core-dev
+Lib/test/test_sqlite3/ @strsp/core-dev
+Modules/_sqlite/ @strsp/core-dev
+
+# Subprocess
+Lib/subprocess.py @strsp/core-dev
+Lib/test/test_subprocess.py @strsp/core-dev
+Modules/*subprocess* @strsp/core-dev
+
+# Tarfile
+Doc/library/tarfile.rst @strsp/core-dev
+Lib/tarfile.py @strsp/core-dev
+Lib/test/test_tarfile.py @strsp/core-dev
+
+# TOML
+Doc/library/tomllib.rst @strsp/core-dev
+Lib/test/test_tomllib/ @strsp/core-dev
+Lib/tomllib/ @strsp/core-dev
+
+# Typing
+Doc/library/typing.rst @strsp/core-dev
+Lib/test/test_typing.py @strsp/core-dev
+Lib/test/typinganndata/ @strsp/core-dev
+Lib/typing.py @strsp/core-dev
+Modules/_typingmodule.c @strsp/core-dev
+
+# Types
+Lib/test/test_types.py @strsp/core-dev
+Lib/types.py @strsp/core-dev
+Modules/_typesmodule.c @strsp/core-dev
+
+# Unittest
+Lib/unittest/mock.py @strsp/core-dev
+Lib/test/test_unittest/testmock/ @strsp/core-dev
+
+# Urllib
+**/*robotparser* @strsp/core-dev
+
+# Venv
+**/*venv* @strsp/core-dev
+
+# Weakref
+**/*weakref* @strsp/core-dev
+
+# Zipfile.Path
+Lib/test/test_zipfile/_path/ @strsp/core-dev
+Lib/zipfile/_path/ @strsp/core-dev
+
+# Zstandard
+Lib/compression/zstd/ @strsp/core-dev
+Lib/test/test_zstd.py @strsp/core-dev
+Modules/_zstd/ @strsp/core-dev
+
+# ----------------------------------------------------------------------------
+
+# Exclusions from .github/CODEOWNERS should go at the very end
+# because the final matching pattern will take precedence.
+
+# Exclude .mailmap from being owned by @python/email-team
+.mailmap @strsp/core-dev
+
+# Exclude Argument Clinic directories
+Modules/**/clinic/ @strsp/core-dev
+Objects/**/clinic/ @strsp/core-dev
+PC/**/clinic/ @strsp/core-dev
+Python/**/clinic/ @strsp/core-dev
