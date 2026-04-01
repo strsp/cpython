@@ -3,7 +3,8 @@ updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "monthly"
+      interval: "weekly"
+    rebase-strategy: "auto"
     labels:
       - "skip issue"
       - "skip news"
@@ -12,6 +13,10 @@ updates:
         update-types:
           - "version-update:semver-minor"
           - "version-update:semver-patch"
+    groups:
+      actions:
+        patterns:
+          - "*"
     cooldown:
       # https://blog.yossarian.net/2025/11/21/We-should-all-be-using-dependency-cooldowns
       # Cooldowns protect against supply chain attacks by avoiding the
@@ -20,7 +25,8 @@ updates:
   - package-ecosystem: "pip"
     directory: "/Tools/"
     schedule:
-      interval: "monthly"
+      interval: "weekly"
+    rebase-strategy: "auto"
     labels:
       - "skip issue"
       - "skip news"
