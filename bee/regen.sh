@@ -1,14 +1,14 @@
 #!/bin/bash -ex
 #
-# android/regen.sh
-# Regenerates configuration for hybrid Python (AOSP + Termux enhanced)
-# Patches are loaded from android/patches/
-# After this script, use official android.py for building
+# bee/regen.sh
+# Regenerates configuration for hybrid Python (AOSP + Enhanced Termux)
+# Patches loaded from bee/patches/
+# After running this, use your modified official android.py for building
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 SRC_TOP=$(pwd)
-LOCAL_TOP=$SRC_TOP/android
+LOCAL_TOP=$SRC_TOP/bee          # Changed from android to bee
 DEPS_DIR="$LOCAL_TOP/deps"
 PATCHES_DIR="$LOCAL_TOP/patches"
 ANDROID_BUILD_TOP=$(cd ../../..; pwd)
@@ -24,11 +24,11 @@ else
   HOST_DIR=linux_x86_64
 fi
 
-# Termux native
+# Termux native detection
 TERMUX_PREFIX=${TERMUX_PREFIX:-${PREFIX:-/data/data/com.termux/files/usr}}
 [ -d "$TERMUX_PREFIX" ] && export PREFIX="$TERMUX_PREFIX"
 
-# ====================== CROSS WITH NDK (auto-detect) ======================
+# ====================== CROSS WITH NDK ======================
 CROSS=${CROSS:-0}
 CROSS_TARGET=${CROSS_TARGET:-aarch64-linux-android34}
 ANDROID_API=${ANDROID_API:-34}
@@ -50,11 +50,12 @@ if [ $CROSS -eq 1 ]; then
   export LDFLAGS="--sysroot=$NDK_SYSROOT"
   export CROSS_HOST="${CROSS_TARGET%%-*}-linux-android"
 else
-  # Native
+  # Native AOSP clang
   CLANG_VERSION=$(cd "$ANDROID_BUILD_TOP" 2>/dev/null && build/soong/scripts/get_clang_version.py || echo "host")
   [ "$HOST_DIR" = "linux_x86_64" ] && export CC="$ANDROID_BUILD_TOP/prebuilts/clang/host/linux-x86/${CLANG_VERSION}/bin/clang" || export CC=clang
 fi
 
+# Common PREFIX for dependencies
 export PREFIX=${PREFIX:-$DEPS_DIR/install}
 mkdir -p "$PREFIX/include" "$PREFIX/lib" "$PREFIX/bin"
 export CFLAGS="$CFLAGS -I$PREFIX/include"
@@ -121,7 +122,7 @@ regen_configure() {
   cp -rp "$SRC_TOP" "$PYTHON_BUILD"
   cd "$PYTHON_BUILD"
 
-  # Apply patches from android/patches/
+  # Apply patches from bee/patches/
   if [ -d "$PATCHES_DIR" ]; then
     for p in "$PATCHES_DIR"/*.patch; do
       [ -f "$p" ] || continue
@@ -179,7 +180,7 @@ EOF
 EOF
   fi
 
-  # Copy base pyconfig
+  # Copy base
   mkdir -p "$LOCAL_TOP/$HOST_DIR/pyconfig"
   cp pyconfig.h "$LOCAL_TOP/$HOST_DIR/pyconfig/"
 
@@ -189,7 +190,7 @@ EOF
     cp pyconfig.h "$LOCAL_TOP/bionic/pyconfig/pyconfig.h"
     bionic_pyconfig="$LOCAL_TOP/bionic/pyconfig/pyconfig.h"
 
-    # Only size adjustments (as per your request)
+    # Only size adjustments
     sed -i 's%#define SIZEOF_FPOS_T .*%#define SIZEOF_FPOS_T 8%' "$bionic_pyconfig"
     sed -i 's%#define SIZEOF_LONG .*%#ifdef __LP64__\n#define SIZEOF_LONG 8\n#else\n#define SIZEOF_LONG 4\n#endif%' "$bionic_pyconfig"
     sed -i 's%#define SIZEOF_LONG_DOUBLE .*%#define SIZEOF_LONG_DOUBLE (SIZEOF_LONG * 2)%' "$bionic_pyconfig"
@@ -200,7 +201,7 @@ EOF
     sed -i 's%#define SIZEOF_VOID_P .*%#define SIZEOF_VOID_P SIZEOF_LONG%' "$bionic_pyconfig"
   fi
 
-  # Termux and official variants
+  # Termux and official
   if [ "$variant" = "all" ] || [ "$variant" = "termux" ]; then
     mkdir -p "$LOCAL_TOP/termux/pyconfig"
     cp pyconfig.h "$LOCAL_TOP/termux/pyconfig/pyconfig.h"
@@ -211,7 +212,7 @@ EOF
   fi
 }
 
-# ====================== FROZEN + CONFIG.C ======================
+# ====================== FROZEN MODULES + CONFIG.C ======================
 regen_frozen_and_config() {
   local variant=$1
   cd "$PYTHON_BUILD"
@@ -244,17 +245,17 @@ case "${1:-all}" in
     for v in "$HOST_DIR" bionic termux official; do
       regen_frozen_and_config "$v"
     done
-    echo "=== All regeneration done ==="
-    echo "Next step: Run the official modified android.py for building"
+    echo "=== Regeneration completed successfully ==="
+    echo "Next: Run your modified official android.py to build Python"
     ;;
   *)
     echo "Usage:"
-    echo "  ./android/regen.sh all"
-    echo "  CROSS=1 CROSS_TARGET=aarch64-linux-android34 ./android/regen.sh all"
-    echo "  ./android/regen.sh deps"
+    echo "  ./bee/regen.sh all"
+    echo "  CROSS=1 CROSS_TARGET=aarch64-linux-android34 ./bee/regen.sh all"
+    echo "  ./bee/regen.sh deps"
     exit 1
     ;;
 esac
 
-echo "Patches were loaded from: $PATCHES_DIR"
-echo "Generated files are ready in android/{bionic,termux,official,$HOST_DIR}/"
+echo "Patches loaded from: $PATCHES_DIR"
+echo "All generated files are in: bee/{bionic,termux,official,$HOST_DIR}/"
