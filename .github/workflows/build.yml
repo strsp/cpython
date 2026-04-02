@@ -24,10 +24,13 @@ jobs:
   Tests:
     name: aarch64
     runs-on: macos-14
-
+    permissions:
+      contents: read
     steps:
       - name: Checkout CPython
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
