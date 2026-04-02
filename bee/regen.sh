@@ -344,8 +344,8 @@ regen_configure() {
   LIBSQLITE3_CFLAGS="-I$PREFIX/include" \
   LIBSQLITE3_LIBS="-L$PREFIX/lib -lsqlite3" \
     ./configure $cfg_flags \
-      --host="$CROSS_TARGET"
-      --build=$(uname -m)-pc-linux-gnu \
+      --host=aarch64-linux-android34 \
+      --build=x86_64-pc-linux-gnu \
       --prefix="$PREFIX"
 
   # Enable modules
