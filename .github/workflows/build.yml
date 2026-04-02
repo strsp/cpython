@@ -57,6 +57,7 @@ jobs:
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/work" \
+            -v "$ANDROID_HOME:$ANDROID_HOME" \
             -w /work \
             -e CROSS=1 \
             -e CROSS_TARGET="$CROSS_TARGET" \
