@@ -344,12 +344,8 @@ regen_configure() {
   LIBSQLITE3_CFLAGS="-I$PREFIX/include" \
   LIBSQLITE3_LIBS="-L$PREFIX/lib -lsqlite3" \
     ./configure $cfg_flags \
-      --with-ncurses=ncursesw \
-      --with-tcltk-includes="-I$PREFIX/include" \
-      --with-tcltk-libs="-L$PREFIX/lib -ltcl9.0 -ltk9.0" \
-      --with-sqlite3="$PREFIX" \
-      --with-lzma="$PREFIX" \
-      --with-zstd="$PREFIX" \
+      --host="$CROSS_TARGET"
+      --build=$(uname -m)-pc-linux-gnu \
       --prefix="$PREFIX"
 
   # Enable modules
