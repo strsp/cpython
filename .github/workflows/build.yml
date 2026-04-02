@@ -1,0 +1,128 @@
+on:
+  push:
+    branches:
+      - main
+      - 'bee/**'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      cross_target:
+        description: 'CROSS_TARGET (e.g. aarch64-linux-android34)'
+        required: false
+        default: 'aarch64-linux-android34'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NDK_VERSION: "27.3.13750724"
+  CROSS_TARGET: ${{ github.event.inputs.cross_target || 'aarch64-linux-android34' }}
+
+jobs:
+  Tests:
+    name: aarch64
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout CPython
+        uses: actions/checkout@v6
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "ndk;${{ env.NDK_VERSION }}"
+          log-accepted-android-sdk-licenses: false
+
+      - name: Set ANDROID_HOME from ANDROID_SDK_ROOT
+        run: echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+
+      - name: Install autotools and build dependencies
+        run: |
+          brew install autoconf automake libtool cmake pkg-config wget
+
+      - name: Set up build Python (host)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Run bee/regen.sh
+        run: |
+          CROSS=1 \
+          CROSS_TARGET="$CROSS_TARGET" \
+          ANDROID_HOME="$ANDROID_HOME" \
+            bash bee/regen.sh all
+
+      - name: Verify regen outputs
+        run: |
+          fail=0
+          for variant in bionic termux official; do
+            f="bee/$variant/pyconfig/pyconfig.h"
+            if [ -f "$f" ]; then
+              echo "OK: $f"
+            else
+              echo "MISSING: $f"; fail=1
+            fi
+          done
+
+          f="bee/darwin/pyconfig/pyconfig.h"
+          if [ -f "$f" ]; then
+            echo "OK: $f"
+          else
+            echo "MISSING: $f"; fail=1
+          fi
+
+          if [ -d "bee/Python/frozen_modules" ]; then
+            echo "OK: bee/Python/frozen_modules"
+          else
+            echo "MISSING: bee/Python/frozen_modules"; fail=1
+          fi
+
+          if [ -f "bee/bionic/config.c" ]; then
+            echo "OK: bee/bionic/config.c"
+          else
+            echo "MISSING: bee/bionic/config.c"; fail=1
+          fi
+
+          [ $fail -eq 0 ] || { echo "One or more regen outputs missing."; exit 1; }
+          echo "All regen outputs verified."
+
+      - name: Run android.py ci --fast-ci
+        env:
+          HOST: aarch64-linux-android
+          ANDROID_API_LEVEL: "34"
+          CFLAGS_BIONIC: "-D__BIONIC_NO_PAGE_SIZE_MACRO"
+          LDFLAGS_PYTHON: "-Wl,--no-undefined"
+        run: |
+          python3 Android/android.py ci --fast-ci aarch64-linux-android
+
+      - name: Upload regen artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bee-regen-${{ env.CROSS_TARGET }}
+          path: |
+            bee/bionic/pyconfig/pyconfig.h
+            bee/termux/pyconfig/pyconfig.h
+            bee/official/pyconfig/pyconfig.h
+            bee/bionic/config.c
+            bee/Python/frozen_modules/
+          retention-days: 7
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-ci-results-aarch64
+          path: |
+            Android/build/aarch64-linux-android/testresults/
+            Android/build/aarch64-linux-android/Makefile
+          retention-days: 14
