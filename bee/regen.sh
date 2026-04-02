@@ -25,6 +25,8 @@ ANDROID_BUILD_TOP=$(cd ../../..; pwd)
 
 mkdir -p "$DEPS_DIR" "$LOCAL_TOP" "$PATCHES_DIR"
 
+fail() { echo "ERROR: $1" >&2; exit 1; }
+
 # ====================== HOST DETECTION (build machine) ======================
 if [ "$(uname)" = "Darwin" ]; then
   HOST_DIR=darwin
@@ -303,14 +305,25 @@ regen_configure() {
   cd "$PYTHON_BUILD"
 
   # Apply patches from bee/patches/
+  # Patches are sorted by filename so numbered prefixes (e.g. 001-foo.patch)
+  # control application order reliably.
   if [ -d "$PATCHES_DIR" ]; then
-    for p in "$PATCHES_DIR"/*.patch; do
+    for p in $(find "$PATCHES_DIR" -maxdepth 1 \( -name '*.patch' -o -name '*.diff' \) | sort); do
       [ -f "$p" ] || continue
-      if patch -p1 -N --dry-run < "$p" >/dev/null 2>&1; then
-        echo "Applying patch: $(basename "$p")"
+      name="$(basename "$p")"
+
+      # Forward dry-run: can the patch be applied cleanly?
+      if patch -p1 --dry-run < "$p" >/dev/null 2>&1; then
+        echo "Applying patch: $name"
         patch -p1 < "$p"
+
+      # Reverse dry-run: is the patch already applied?
+      elif patch -p1 -R --dry-run < "$p" >/dev/null 2>&1; then
+        echo "Skipping already-applied patch: $name"
+
+      # Neither forward nor reverse worked — this is a real failure.
       else
-        echo "Skipping already-applied patch: $(basename "$p")"
+        fail "Patch failed to apply and is not already applied: $name"
       fi
     done
   fi
@@ -471,3 +484,4 @@ esac
 
 echo "Patches loaded from: $PATCHES_DIR"
 echo "All generated files are in: bee/{bionic,termux,official,$HOST_DIR}/"
+
