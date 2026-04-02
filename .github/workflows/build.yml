@@ -114,7 +114,7 @@ jobs:
           python3 Android/android.py ci --fast-ci aarch64-linux-android
 
       - name: Upload regen artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: bee-regen-${{ env.CROSS_TARGET }}
@@ -127,7 +127,7 @@ jobs:
           retention-days: 7
 
       - name: Upload test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: android-ci-results-aarch64
