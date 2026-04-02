@@ -23,9 +23,10 @@ env:
 jobs:
   Tests:
     name: aarch64
-    runs-on: macos-14
+    runs-on: ubuntu-latest
     permissions:
       contents: read
+
     steps:
       - name: Checkout CPython
         uses: actions/checkout@v6
@@ -33,7 +34,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -47,22 +48,22 @@ jobs:
       - name: Set ANDROID_HOME from ANDROID_SDK_ROOT
         run: echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
 
-      - name: Install autotools and build dependencies
-        run: |
-          brew install autoconf automake libtool cmake pkg-config wget
-
       - name: Set up build Python (host)
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.13'
 
-      - name: Run bee/regen.sh
+      - name: Run bee/regen.sh (via autoconf container)
         run: |
-          export ANDROID_ABI="arm64-v8a"
-          export ANDROID_CMAKE_TOOLCHAIN_FILE="/Users/runner/Library/Android/sdk/ndk/27.3.13750724/build/cmake/android.toolchain.cmake"
-          CROSS=1 \
-          CROSS_TARGET="$CROSS_TARGET" \
-          ANDROID_HOME="$ANDROID_HOME" \
+          docker run --rm \
+            -v "${{ github.workspace }}:/work" \
+            -w /work \
+            -e CROSS=1 \
+            -e CROSS_TARGET="$CROSS_TARGET" \
+            -e ANDROID_HOME="$ANDROID_HOME" \
+            -e ANDROID_ABI="arm64-v8a" \
+            -e ANDROID_CMAKE_TOOLCHAIN_FILE="$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}/build/cmake/android.toolchain.cmake" \
+            ghcr.io/python/autoconf:2024.10.16.11360930377 \
             bash bee/regen.sh all
 
       - name: Verify regen outputs
@@ -76,26 +77,22 @@ jobs:
               echo "MISSING: $f"; fail=1
             fi
           done
-
           f="bee/darwin/pyconfig/pyconfig.h"
           if [ -f "$f" ]; then
             echo "OK: $f"
           else
             echo "MISSING: $f"; fail=1
           fi
-
           if [ -d "bee/Python/frozen_modules" ]; then
             echo "OK: bee/Python/frozen_modules"
           else
             echo "MISSING: bee/Python/frozen_modules"; fail=1
           fi
-
           if [ -f "bee/bionic/config.c" ]; then
             echo "OK: bee/bionic/config.c"
           else
             echo "MISSING: bee/bionic/config.c"; fail=1
           fi
-
           [ $fail -eq 0 ] || { echo "One or more regen outputs missing."; exit 1; }
           echo "All regen outputs verified."
 
