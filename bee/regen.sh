@@ -17,12 +17,15 @@
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-SRC_TOP=$(pwd)
-LOCAL_TOP=$SRC_TOP/bee
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# SRC_TOP=$(pwd)
+SRC_TOP="$(cd "$SCRIPT_DIR/.." && pwd)"
+LOCAL_TOP="$SRC_TOP/bee"
 DEPS_DIR="$LOCAL_TOP/deps"
 PATCHES_DIR="$LOCAL_TOP/patches"
-ANDROID_BUILD_TOP=$(cd ../../..; pwd)
-
+ANDROID_BUILD_TOP="$SRC_TOP"
+#ANDROID_BUILD_TOP=$(cd ../../..; pwd)
+mkdir -p "$SRC_TOP/out/python"
 mkdir -p "$DEPS_DIR" "$LOCAL_TOP" "$PATCHES_DIR"
 
 fail() { echo "ERROR: $1" >&2; exit 1; }
@@ -186,7 +189,7 @@ build_tcl() {
     mv "$DEPS_DIR/tcl${ver}" "$dir"
   }
   (cd "$dir/unix" && \
-    ./configure --prefix="$PREFIX" --disable-shared --enable-static --without-tzdata && \
+    ./configure --prefix="$PREFIX" --disable-shared --enable-static --host="$CROSS_TARGET" --build=$(uname -m)-pc-linux-gnu --without-tzdata && \
     make -j"$CPU_COUNT" && \
     make install)
 }
