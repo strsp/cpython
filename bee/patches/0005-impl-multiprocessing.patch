@@ -55,9 +55,8 @@
 +static const char *get_shm_base_dir(void)
 +{
 +    /* Prefer the compile-time Termux prefix when it has been substituted. */
-+    static const char compiled_prefix[] = "@TERMUX_PREFIX@/tmp";
++    static const char *compiled_prefix = getenv("PREFIX") ? getenv("PREFIX") : (getenv("TERMUX_PREFIX") ? getenv("TERMUX_PREFIX") : "/data/data/com.termux/files/usr");
 +
-+    /* If @TERMUX_PREFIX@ was never substituted the literal '@' remains. */
 +    if (compiled_prefix[0] != '@')
 +        return compiled_prefix;
 +
