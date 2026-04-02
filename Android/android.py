@@ -226,6 +226,12 @@ def configure_host_python(context):
     if context.clean:
         clean(context.host)
 
+    python_env = {**os.environ}
+    if os.environ.get("CFLAGS_BIONIC"):
+        python_env["CFLAGS"]   = os.environ.get("CFLAGS",   "") + " " + os.environ["CFLAGS_BIONIC"]
+        python_env["CXXFLAGS"] = os.environ.get("CXXFLAGS", "") + " " + os.environ["CFLAGS_BIONIC"]
+    if os.environ.get("LDFLAGS_PYTHON"):
+        python_env["LDFLAGS"]  = os.environ.get("LDFLAGS",  "") + " " + os.environ["LDFLAGS_PYTHON"]
     host_dir = subdir(context.host, create=True)
     prefix_dir = host_dir / "prefix"
     if not prefix_dir.exists():
@@ -252,7 +258,7 @@ def configure_host_python(context):
 
     if context.args:
         command.extend(context.args)
-    run(command, host=context.host)
+    run(command, host=context.host,env=python_env)
 
 
 def make_host_python(context):

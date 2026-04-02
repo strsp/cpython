@@ -86,7 +86,8 @@ if [ -n "${PREFIX:-}" ]; then
 fi
 # When compiling C++, some build systems will combine CFLAGS and CXXFLAGS, and some will
 # use CXXFLAGS alone.
-export CXXFLAGS="$CFLAGS"
+export CXXFLAGS="$CFLAGS $CFLAGS_BIONIC"
+export LDFLAGS="$LDFLAGS $LDFLAGS_PYTHON"
 # Use the same variable name as conda-build
 if [ "$(uname)" = "Darwin" ]; then
     CPU_COUNT="$(sysctl -n hw.ncpu)"
