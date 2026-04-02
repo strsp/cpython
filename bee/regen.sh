@@ -4,6 +4,16 @@
 # Regenerates configuration for hybrid Python (AOSP + Enhanced Termux)
 # Patches loaded from bee/patches/
 # After running this, use your modified official android.py for building
+#
+# Cross-compile usage:
+#   CROSS=1 CROSS_TARGET=aarch64-linux-android34 \
+#     ANDROID_HOME=/path/to/sdk ./bee/regen.sh all
+#
+# Native AOSP usage (no NDK):
+#   ./bee/regen.sh all
+#
+# You may also pre-source android-toolchain.sh yourself and then call this
+# script; it will detect the already-exported toolchain and skip re-sourcing.
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -15,7 +25,7 @@ ANDROID_BUILD_TOP=$(cd ../../..; pwd)
 
 mkdir -p "$DEPS_DIR" "$LOCAL_TOP" "$PATCHES_DIR"
 
-# ====================== HOST DETECTION ======================
+# ====================== HOST DETECTION (build machine) ======================
 if [ "$(uname)" = "Darwin" ]; then
   HOST_DIR=darwin
 elif [ "$(uname -m)" = "aarch64" ] || [ "$(uname -m)" = "arm64" ]; then
@@ -24,48 +34,103 @@ else
   HOST_DIR=linux_x86_64
 fi
 
-# Termux native detection
+# ====================== TERMUX NATIVE DETECTION ======================
 TERMUX_PREFIX=${TERMUX_PREFIX:-${PREFIX:-/data/data/com.termux/files/usr}}
 [ -d "$TERMUX_PREFIX" ] && export PREFIX="$TERMUX_PREFIX"
 
-# ====================== CROSS WITH NDK ======================
+# ====================== PREFIX FOR DEPENDENCIES ======================
+export PREFIX=${PREFIX:-$DEPS_DIR/install}
+mkdir -p "$PREFIX/include" "$PREFIX/lib" "$PREFIX/bin"
+export PATH="$PREFIX/bin:$PATH"
+
+# ====================== CROSS / NDK TOOLCHAIN ======================
 CROSS=${CROSS:-0}
 CROSS_TARGET=${CROSS_TARGET:-aarch64-linux-android34}
-ANDROID_API=${ANDROID_API:-34}
 
 if [ $CROSS -eq 1 ]; then
   echo "=== CROSS-COMPILE MODE (NDK) - target=$CROSS_TARGET ==="
-  if [ -z "$ANDROID_NDK" ]; then
-    for p in "$ANDROID_SDK_ROOT/ndk/"* "$HOME/Android/Sdk/ndk/"* "$ANDROID_BUILD_TOP/prebuilts/ndk/"*; do
-      [ -d "$p" ] && ANDROID_NDK="$p" && break
-    done
+
+  # android-env.sh requires HOST (GNU triplet, no API suffix) and
+  # ANDROID_API_LEVEL as separate variables.  Derive both from CROSS_TARGET
+  # which encodes them together, e.g.:
+  #   aarch64-linux-android34   -> HOST=aarch64-linux-android   API=34
+  #   armv7a-linux-androideabi21 -> HOST=arm-linux-androideabi  API=21
+  export HOST=$(echo "$CROSS_TARGET" | sed 's/[0-9]*$//')
+  export ANDROID_API_LEVEL=$(echo "$CROSS_TARGET" | grep -o '[0-9]*$')
+  export ANDROID_API_LEVEL=${ANDROID_API_LEVEL:-21}
+
+  # armv7a-linux-androideabi is the NDK clang-launcher triplet; the GNU
+  # triplet used by autoconf and regen.sh is arm-linux-androideabi.
+  # android-env.sh already maps arm-linux-androideabi -> armv7a for the
+  # clang launcher internally, so normalise HOST to the GNU form here.
+  if echo "$HOST" | grep -q 'armv7a-linux-androideabi'; then
+    export HOST=arm-linux-androideabi
   fi
-  [ -z "$ANDROID_NDK" ] && { echo "ERROR: NDK not found. Set ANDROID_NDK"; exit 1; }
 
-  NDK_CLANG="$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
-  NDK_SYSROOT="$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+  # Locate android-env.sh: it lives in Android/ relative to the CPython
+  # source root (SRC_TOP), which is two levels above bee/.
+  ANDROID_ENV="$SRC_TOP/Android/android-env.sh"
+  [ -f "$ANDROID_ENV" ] || {
+    echo "ERROR: Android/android-env.sh not found at $ANDROID_ENV"
+    echo "       This script must be run from within a CPython source tree."
+    exit 1
+  }
 
-  export CC="$NDK_CLANG --target=$CROSS_TARGET"
-  export CFLAGS="--sysroot=$NDK_SYSROOT -D__ANDROID_API__=$ANDROID_API"
-  export LDFLAGS="--sysroot=$NDK_SYSROOT"
+  # android-env.sh requires ANDROID_HOME; try common locations if unset.
+  if [ -z "${ANDROID_HOME:-}" ]; then
+    for _p in "$HOME/Android/Sdk" "$HOME/android-sdk" \
+              "${ANDROID_SDK_ROOT:-__none__}"; do
+      [ -d "$_p" ] && export ANDROID_HOME="$_p" && break
+    done
+    [ -z "${ANDROID_HOME:-}" ] && {
+      echo "ERROR: ANDROID_HOME not set and no SDK found in default locations."
+      echo "       Set ANDROID_HOME=/path/to/android/sdk and re-run."
+      exit 1
+    }
+  fi
 
-  # Strip the API level suffix to get a valid --host triple
-  # e.g. aarch64-linux-android34 -> aarch64-linux-android
-  CROSS_HOST=$(echo "$CROSS_TARGET" | sed 's/[0-9]*$//')
-  export CROSS_HOST
+  # Source the official android-env.sh.  After this point the following are
+  # set and exported by android-env.sh (with our two suggested patches applied):
+  #   CC CXX AR AS LD NM RANLIB READELF STRIP
+  #   CFLAGS CXXFLAGS LDFLAGS
+  #   PKG_CONFIG PKG_CONFIG_LIBDIR   (when PREFIX is set)
+  #   CPU_COUNT                      (requires the export fix in android-env.sh)
+  #   HOST                           (requires the export fix in android-env.sh)
+  # shellcheck source=Android/android-env.sh
+  . "$ANDROID_ENV"
+
+  # CROSS_HOST is what regen.sh passes to ./configure --host=.
+  # It is identical to HOST after android-env.sh has been sourced.
+  export CROSS_HOST="$HOST"
+
 else
-  # Native AOSP clang
-  CLANG_VERSION=$(cd "$ANDROID_BUILD_TOP" 2>/dev/null && build/soong/scripts/get_clang_version.py || echo "host")
-  [ "$HOST_DIR" = "linux_x86_64" ] && export CC="$ANDROID_BUILD_TOP/prebuilts/clang/host/linux-x86/${CLANG_VERSION}/bin/clang" || export CC=clang
-fi
+  # ---- Native AOSP build (no NDK, no android-env.sh) ----
+  CLANG_VERSION=$(cd "$ANDROID_BUILD_TOP" 2>/dev/null \
+    && build/soong/scripts/get_clang_version.py 2>/dev/null \
+    || echo "host")
+  if [ "$HOST_DIR" = "linux_x86_64" ]; then
+    export CC="$ANDROID_BUILD_TOP/prebuilts/clang/host/linux-x86/${CLANG_VERSION}/bin/clang"
+  else
+    export CC=clang
+  fi
+  export CXX="${CC}++"
 
-# Common PREFIX for dependencies
-export PREFIX=${PREFIX:-$DEPS_DIR/install}
-mkdir -p "$PREFIX/include" "$PREFIX/lib" "$PREFIX/bin"
-export CFLAGS="${CFLAGS} -I$PREFIX/include"
-export LDFLAGS="${LDFLAGS} -L$PREFIX/lib"
-export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-export PATH="$PREFIX/bin:$PATH"
+  # CPU_COUNT: mirror the same Darwin/Linux logic that android-env.sh uses,
+  # so all build_* functions always have a valid $CPU_COUNT regardless of path.
+  if [ "$(uname)" = "Darwin" ]; then
+    CPU_COUNT="$(sysctl -n hw.ncpu)"
+  else
+    CPU_COUNT="$(nproc)"
+  fi
+  export CPU_COUNT
+
+  # In the native path android-env.sh is not sourced, so append the dep
+  # prefix flags manually (android-env.sh does this when PREFIX is set).
+  export CFLAGS="${CFLAGS:+$CFLAGS }-I$PREFIX/include"
+  export CXXFLAGS="${CXXFLAGS:+$CXXFLAGS }-I$PREFIX/include"
+  export LDFLAGS="${LDFLAGS:+$LDFLAGS }-L$PREFIX/lib"
+  export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+fi
 
 # ====================== BUILD DEPENDENCIES ======================
 
@@ -86,13 +151,27 @@ build_zstd() {
     tar -C "$DEPS_DIR" -xzf "$DEPS_DIR/$name.tar.gz"
     mv "$DEPS_DIR/zstd-${ver}" "$dir"
   }
+
+  # When cross-compiling with the NDK, pass the NDK's own CMake toolchain
+  # file plus the ABI and API level.  android-toolchain.sh exports both
+  # ANDROID_CMAKE_TOOLCHAIN_FILE and ANDROID_ABI for exactly this purpose.
+  local cmake_cross_flags=""
+  if [ $CROSS -eq 1 ] && [ -n "${ANDROID_CMAKE_TOOLCHAIN_FILE:-}" ]; then
+    cmake_cross_flags="-DCMAKE_TOOLCHAIN_FILE=$ANDROID_CMAKE_TOOLCHAIN_FILE \
+      -DANDROID_ABI=${ANDROID_ABI} \
+      -DANDROID_PLATFORM=android-${ANDROID_API_LEVEL} \
+      -DANDROID_STL=none"
+  fi
+
+  # shellcheck disable=SC2086  (word-splitting of cmake_cross_flags is intentional)
   cmake -S "$dir/build/cmake" -B "$dir/build_out" \
+    $cmake_cross_flags \
     -DCMAKE_INSTALL_PREFIX="$PREFIX" \
     -DZSTD_BUILD_SHARED=OFF \
     -DZSTD_BUILD_STATIC=ON \
     -DZSTD_BUILD_PROGRAMS=OFF \
     -DCMAKE_BUILD_TYPE=Release
-  cmake --build "$dir/build_out" --parallel "$(nproc || echo 4)"
+  cmake --build "$dir/build_out" --parallel "$CPU_COUNT"
   cmake --install "$dir/build_out"
 }
 
@@ -106,7 +185,7 @@ build_tcl() {
   }
   (cd "$dir/unix" && \
     ./configure --prefix="$PREFIX" --disable-shared --enable-static --without-tzdata && \
-    make -j"$(nproc || echo 4)" && \
+    make -j"$CPU_COUNT" && \
     make install)
 }
 
@@ -121,7 +200,7 @@ build_tk() {
   (cd "$dir/unix" && \
     ./configure --prefix="$PREFIX" --disable-shared --enable-static \
       --with-tcl="$DEPS_DIR/tcl/unix" --without-x && \
-    make -j"$(nproc || echo 4)" && \
+    make -j"$CPU_COUNT" && \
     make install)
 }
 
@@ -135,7 +214,7 @@ build_sqlite() {
   }
   (cd "$dir" && \
     ./configure --prefix="$PREFIX" --disable-shared --enable-static && \
-    make -j"$(nproc || echo 4)" && \
+    make -j"$CPU_COUNT" && \
     make install)
 }
 
@@ -151,7 +230,7 @@ build_xz() {
     ./configure --prefix="$PREFIX" --disable-shared --enable-static \
       --disable-xz --disable-xzdec --disable-lzmadec --disable-lzmainfo \
       --disable-lzma-links --disable-scripts --disable-doc && \
-    make -j"$(nproc || echo 4)" && \
+    make -j"$CPU_COUNT" && \
     make install)
 }
 
@@ -168,7 +247,7 @@ build_ncurses() {
       --disable-shared --enable-static \
       --enable-widec \
       --without-normal --without-progs --without-x --disable-rpath && \
-    make -j"$(nproc || echo 4)" && \
+    make -j"$CPU_COUNT" && \
     make install)
 }
 
@@ -182,7 +261,7 @@ build_readline() {
   }
   (cd "$dir" && \
     ./configure --prefix="$PREFIX" --with-curses --disable-shared --enable-static && \
-    make -j"$(nproc || echo 4)" && \
+    make -j"$CPU_COUNT" && \
     make install)
 }
 
@@ -197,7 +276,7 @@ build_libxcrypt() {
   (cd "$dir" && \
     [ -f configure ] || autoreconf -fi && \
     ./configure --prefix="$PREFIX" --disable-shared --enable-static --disable-obsolete-api && \
-    make -j"$(nproc || echo 4)" && \
+    make -j"$CPU_COUNT" && \
     make install)
 }
 
@@ -339,7 +418,7 @@ regen_frozen_and_config() {
   cd "$PYTHON_BUILD"
 
   # Regenerate frozen modules via the correct make target
-  make -j"$(nproc || echo 8)" regen-frozen
+  make -j"$CPU_COUNT" regen-frozen
   rm -rf "$LOCAL_TOP/Python/frozen_modules"
   mkdir -p "$LOCAL_TOP/Python"
   cp -rp Python/frozen_modules "$LOCAL_TOP/Python/"
