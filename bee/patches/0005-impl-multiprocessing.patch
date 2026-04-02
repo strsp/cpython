@@ -26,7 +26,7 @@
  
 --- a/Modules/_multiprocessing/posixshmem.c
 +++ b/Modules/_multiprocessing/posixshmem.c
-@@ -11,6 +11,126 @@
+@@ -11,6 +11,125 @@
  #include <sys/mman.h>
  #endif
  
