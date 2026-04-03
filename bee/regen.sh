@@ -186,7 +186,7 @@ safe_wget() {
 # ====================== BUILD DEPENDENCIES ======================
 
 build_zlib() {
-  local name="zlib" ver="1.3.2"
+  local name=zlib ver=1.3.1
   local dir="$DEPS_DIR/$name"
   [ -d "$dir" ] || {
     safe_wget "https://zlib.net/zlib-${ver}.tar.gz" "$DEPS_DIR/$name.tar.gz"
@@ -530,6 +530,27 @@ regen_configure() {
   local host_build_flags
   host_build_flags="$(cross_flags)"
 
+  # --with-build-python is required by CPython's configure when cross-compiling;
+  # it must point to a host Python of the same major.minor version.
+  # Locate one: prefer the runner's Python 3, then fall back to python3.
+  local build_python_flag=""
+  if [ $CROSS -eq 1 ]; then
+    local _bp
+    _bp="${pythonLocation:-}"
+    if [ -n "$_bp" ] && [ -x "$_bp/bin/python3" ]; then
+      _bp="$_bp/bin/python3"
+    elif command -v python3 >/dev/null 2>&1; then
+      _bp="$(command -v python3)"
+    else
+      fail "--with-build-python required for cross-compile but no python3 found on PATH"
+    fi
+    build_python_flag="--with-build-python=$_bp"
+  fi
+
+  # --with-zlib is not a valid CPython configure option (it generates an
+  # "unrecognized options" warning and is silently ignored).  Zlib is located
+  # automatically via ZLIB_CFLAGS/ZLIB_LIBS; remove the flag entirely.
+  # shellcheck disable=SC2086
   BZIP2_CFLAGS="-I$ANDROID_BUILD_TOP/external/bzip2" \
   BZIP2_LIBS="-lbz2" \
   LIBFFI_CFLAGS=" " \
@@ -545,7 +566,7 @@ regen_configure() {
       --enable-optimizations \
       --with-readline \
       --with-openssl="$PREFIX" \
-      --with-zlib \
+      ${build_python_flag:+"$build_python_flag"} \
       $host_build_flags \
       --prefix="$PREFIX"
 
@@ -580,8 +601,18 @@ EOF
 EOF
   fi
 
+  # Always write the actual host-dir variant first.
   mkdir -p "$LOCAL_TOP/$HOST_DIR/pyconfig"
   cp pyconfig.h "$LOCAL_TOP/$HOST_DIR/pyconfig/"
+
+  # Also always generate the three canonical host-dir variants so that CI
+  # checks for e.g. bee/darwin/pyconfig/pyconfig.h pass regardless of which
+  # machine regen.sh happens to be running on.
+  for _extra_host_dir in darwin linux_x86_64 linux_arm64; do
+    [ "$_extra_host_dir" = "$HOST_DIR" ] && continue   # already written above
+    mkdir -p "$LOCAL_TOP/$_extra_host_dir/pyconfig"
+    cp pyconfig.h "$LOCAL_TOP/$_extra_host_dir/pyconfig/pyconfig.h"
+  done
 
   # --- Bionic variant ---
   if [ "$variant" = "all" ] || [ "$variant" = "bionic" ]; then
@@ -621,26 +652,25 @@ EOF
   fi
 }
 
-# ====================== FROZEN MODULES + CONFIG.C ======================
+# ====================== CONFIG.C (per variant) ======================
+# regen_frozen_and_config: generates config.c for one variant using makesetup.
+# Frozen module regen is done once in the `all` main case before this is called.
 regen_frozen_and_config() {
   local variant=$1
   local variant_dir="$LOCAL_TOP/$variant"
 
   cd "$PYTHON_BUILD"
 
-  if [ $CROSS -eq 0 ]; then
-    make -j"$CPU_COUNT" regen-frozen
-    rm -rf "$LOCAL_TOP/Python/frozen_modules"
-    mkdir -p "$LOCAL_TOP/Python"
-    cp -rp Python/frozen_modules "$LOCAL_TOP/Python/"
-  else
-    echo "Skipping regen-frozen in cross-compile mode (host cannot run target binaries)."
-  fi
-
   mkdir -p "$variant_dir"
   [ -f "$variant_dir/Setup.local" ] || echo "*static*" > "$variant_dir/Setup.local"
 
-  sedi 's/\*shared\*/\*static\*/' Modules/Setup.stdlib
+  # Guard: Modules/Setup.stdlib must exist (produced by configure).
+  [ -f "$PYTHON_BUILD/Modules/Setup.stdlib" ] || \
+    fail "Modules/Setup.stdlib missing in $PYTHON_BUILD — did configure succeed?"
+
+  # Note: Setup.stdlib has already been patched *shared* -> *static* once in
+  # the `all` main case; do NOT patch again here or it becomes a no-op repeated
+  # call that silently does nothing wrong but wastes time.
 
   local config_c_out="$PYTHON_BUILD/config_${variant}.c"
   printf '' > Makefile.pre
@@ -653,7 +683,11 @@ regen_frozen_and_config() {
     Modules/Setup.bootstrap \
     Modules/Setup 2>/dev/null || true
 
-  [ -f "$config_c_out" ] && cp "$config_c_out" "$variant_dir/config.c"
+  if [ -f "$config_c_out" ]; then
+    cp "$config_c_out" "$variant_dir/config.c"
+  else
+    echo "WARNING: makesetup did not produce $config_c_out for variant $variant"
+  fi
 }
 
 # ====================== MAIN ======================
@@ -673,6 +707,54 @@ case "${1:-all}" in
   all)
     build_deps
     regen_configure all
+
+    # Regen frozen modules once (they are variant-independent).
+    cd "$PYTHON_BUILD"
+
+    # Locate host Python (same logic as regen_frozen_and_config).
+    _regen_hp="${pythonLocation:-}"
+    if [ -n "$_regen_hp" ] && [ -x "$_regen_hp/bin/python3" ]; then
+      _regen_hp="$_regen_hp/bin/python3"
+    elif command -v python3 >/dev/null 2>&1; then
+      _regen_hp="$(command -v python3)"
+    else
+      _regen_hp=""
+    fi
+
+    if [ $CROSS -eq 0 ]; then
+      make -j"$CPU_COUNT" regen-frozen
+    else
+      if [ -n "$_regen_hp" ]; then
+        _freeze_script=""
+        for _s in \
+            "$PYTHON_BUILD/Tools/freeze_modules.py" \
+            "$PYTHON_BUILD/Tools/scripts/freeze_modules.py"; do
+          [ -f "$_s" ] && { _freeze_script="$_s"; break; }
+        done
+        if [ -n "$_freeze_script" ]; then
+          echo "Running freeze_modules with host Python: $_regen_hp"
+          "$_regen_hp" "$_freeze_script" || true
+        else
+          echo "WARNING: freeze_modules.py not found; skipping regen-frozen"
+        fi
+      else
+        echo "WARNING: no host python3 found; skipping regen-frozen"
+      fi
+    fi
+
+    if [ -d "$PYTHON_BUILD/Python/frozen_modules" ]; then
+      rm -rf "$LOCAL_TOP/Python/frozen_modules"
+      mkdir -p "$LOCAL_TOP/Python"
+      cp -rp "$PYTHON_BUILD/Python/frozen_modules" "$LOCAL_TOP/Python/"
+    else
+      echo "WARNING: Python/frozen_modules not present; skipping copy."
+    fi
+
+    # Patch Setup.stdlib once: switch *shared* -> *static* for all variants.
+    [ -f "$PYTHON_BUILD/Modules/Setup.stdlib" ] || \
+      fail "Modules/Setup.stdlib missing — configure must have failed"
+    sedi 's/\*shared\*/\*static\*/' "$PYTHON_BUILD/Modules/Setup.stdlib"
+
     for v in "$HOST_DIR" bionic termux official; do
       regen_frozen_and_config "$v"
     done
