@@ -81,7 +81,7 @@ jobs:
             export BUILD_DIR="/usr"
             sudo ./.github/workflows/posix-deps-apt.sh
             ./configure --prefix="$BUILD_DIR"
-            make -j8 install
+            sudo make -j8 install
             dirname "$BUILD_DIR" || true
             echo "$BUILD_DIR"
             bash bee/regen.sh all
