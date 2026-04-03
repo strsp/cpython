@@ -73,7 +73,6 @@ jobs:
             -e ANDROID_ABI="arm64-v8a" \
             -e ANDROID_CMAKE_TOOLCHAIN_FILE="$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}/build/cmake/android.toolchain.cmake" \
             ghcr.io/python/autoconf:2024.10.16.11360930377 \
-            python3 --version
             bash -c "
               apt-get update -qq &&
               apt-get install -y --no-install-recommends \
@@ -87,8 +86,14 @@ jobs:
                 dnf -y install \
                     wget cmake make python3 python3-devel ninja-build autoconf automake libtool pkgconfig git m4 \
                 && dnf clean all
-                && bash bee/regen.sh all
             "
+            echo "BUILD_DIR=$(realpath ${{ github.workspace }}/../build)" >> "$GITHUB_ENV"
+            sudo ./.github/workflows/posix-deps-apt.sh
+            ./configure --prefix="$BUILD_DIR/host-python"
+            make -j8 install
+            dirname "$BUILD_DIR/host-python" || true
+            echo "$BUILD_DIR/host-python"
+            bash bee/regen.sh all
       - name: Verify regen outputs
         run: |
           fail=0
