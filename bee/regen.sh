@@ -189,22 +189,7 @@ build_tcl() {
     mv "$DEPS_DIR/tcl${ver}" "$dir"
   }
   (cd "$dir/unix" && \
-    ./configure --prefix="$PREFIX" --disable-shared --enable-static --host="$CROSS_TARGET" --build=$(uname -m)-pc-linux-gnu --without-tzdata && \
-    make -j"$CPU_COUNT" && \
-    make install)
-}
-
-build_tk() {
-  local name=tk ver=9.0.3
-  local dir="$DEPS_DIR/$name"
-  [ -d "$dir" ] || {
-    wget -q "https://prdownloads.sourceforge.net/tcl/tk${ver}-src.tar.gz" -O "$DEPS_DIR/$name.tar.gz"
-    tar -C "$DEPS_DIR" -xzf "$DEPS_DIR/$name.tar.gz"
-    mv "$DEPS_DIR/tk${ver}" "$dir"
-  }
-  (cd "$dir/unix" && \
-    ./configure --prefix="$PREFIX" --disable-shared  --host=aarch64-linux-android --build=x86_64-pc-linux-gnu --enable-static \
-      --with-tcl="$DEPS_DIR/tcl/unix" --without-x && \
+    ./configure --prefix="$PREFIX" --disable-shared  --host="$CROSS_TARGET" --build=$(uname -m)-pc-linux-gnu  && \
     make -j"$CPU_COUNT" && \
     make install)
 }
@@ -219,7 +204,7 @@ build_sqlite() {
   }
 
   (cd "$dir" && \
-    ./configure --prefix="$PREFIX" --disable-shared --host=aarch64-linux-android --build=x86_64-pc-linux-gnu --enable-static && \
+    ./configure --prefix="$PREFIX" --disable-shared --host=aarch64-linux-android --build=x86_64-pc-linux-gnu  && \
     make -j"$CPU_COUNT" && \
     make install)
 }
@@ -233,7 +218,7 @@ build_xz() {
     mv "$DEPS_DIR/xz-${ver}" "$dir"
   }
   (cd "$dir" && \
-    ./configure --prefix="$PREFIX" --disable-shared --host=aarch64-linux-android --build=x86_64-pc-linux-gnu --enable-static \
+    ./configure --prefix="$PREFIX" --disable-shared --host=aarch64-linux-android --build=x86_64-pc-linux-gnu  \
       --disable-xz --disable-xzdec --disable-lzmadec --disable-lzmainfo \
       --disable-lzma-links --disable-scripts --disable-doc && \
     make -j"$CPU_COUNT" && \
@@ -250,7 +235,7 @@ build_ncurses() {
   }
   (cd "$dir" && \
     ./configure --prefix="$PREFIX" \
-      --disable-shared --host=aarch64-linux-android --build=x86_64-pc-linux-gnu --enable-static \
+      --disable-shared --host=aarch64-linux-android --build=x86_64-pc-linux-gnu  \
       --enable-widec \
       --without-normal --without-progs --without-x --disable-rpath && \
     make -j"$CPU_COUNT" && \
@@ -266,7 +251,7 @@ build_readline() {
     mv "$DEPS_DIR/readline-${ver}" "$dir"
   }
   (cd "$dir" && \
-    ./configure --prefix="$PREFIX" --with-curses --disable-shared --host=aarch64-linux-android --build=x86_64-pc-linux-gnu --enable-static && \
+    ./configure --prefix="$PREFIX" --with-curses --disable-shared --host=aarch64-linux-android --build=x86_64-pc-linux-gnu  && \
     make -j"$CPU_COUNT" && \
     make install)
 }
@@ -281,7 +266,7 @@ build_libxcrypt() {
   }
   (cd "$dir" && \
     [ -f configure ] || autoreconf -fi && \
-    ./configure --prefix="$PREFIX" --disable-shared --enable-static --host=aarch64-linux-android --build=x86_64-pc-linux-gnu --disable-obsolete-api && \
+    ./configure --prefix="$PREFIX" --disable-shared  --host=aarch64-linux-android --build=x86_64-pc-linux-gnu --disable-obsolete-api && \
     make -j"$CPU_COUNT" && \
     make install)
 }
@@ -290,7 +275,6 @@ build_deps() {
   echo "=== Building all dependencies ==="
   build_zstd
   build_tcl
-  build_tk
   build_sqlite
   build_xz
   build_ncurses
