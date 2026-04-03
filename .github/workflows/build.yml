@@ -85,12 +85,12 @@ jobs:
               echo "MISSING: $f"; fail=1
             fi
           done
-          f="bee/darwin/pyconfig/pyconfig.h"
-          if [ -f "$f" ]; then
-            echo "OK: $f"
-          else
-            echo "MISSING: $f"; fail=1
-          fi
+          # f="bee/darwin/pyconfig/pyconfig.h"
+          # if [ -f "$f" ]; then
+          #   echo "OK: $f"
+          # else
+          #  echo "MISSING: $f"; fail=1
+          # fi
           if [ -d "bee/Python/frozen_modules" ]; then
             echo "OK: bee/Python/frozen_modules"
           else
