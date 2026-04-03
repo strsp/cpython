@@ -544,7 +544,7 @@ regen_configure() {
     else
       fail "--with-build-python required for cross-compile but no python3 found on PATH"
     fi
-    build_python_flag="--with-build-python=/usr/bin/python3.13"
+    build_python_flag="--with-build-python=/opt/hostedtoolcache/Python/3.13.12/x64/bin/python3.13"
   fi
 
   # --with-zlib is not a valid CPython configure option (it generates an
