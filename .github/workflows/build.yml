@@ -79,6 +79,7 @@ jobs:
                 wget cmake make python3 python3-dev ninja-build build-essential autoconf automake libtool pkg-config git m4
             "
             echo "BUILD_DIR=${{ github.workspace }}/buildr" >> "$GITHUB_ENV"
+            echo "$BUILD_DIR"
             export BUILD_DIR="buildr"
             mkdir -p "$BUILD_DIR"
             mkdir -p "$BUILD_DIR/host-python"
