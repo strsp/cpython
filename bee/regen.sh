@@ -186,7 +186,7 @@ safe_wget() {
 # ====================== BUILD DEPENDENCIES ======================
 
 build_zlib() {
-  local name=zlib ver=1.3.1
+  local name="zlib" ver="1.3.2"
   local dir="$DEPS_DIR/$name"
   [ -d "$dir" ] || {
     safe_wget "https://zlib.net/zlib-${ver}.tar.gz" "$DEPS_DIR/$name.tar.gz"
