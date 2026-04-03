@@ -62,6 +62,7 @@ jobs:
 
       - name: Run bee/regen.sh (via autoconf container)
         run: |
+          which python3.13
           docker run --rm \
             -v "${{ github.workspace }}:/work" \
             -v "$ANDROID_HOME:$ANDROID_HOME" \
