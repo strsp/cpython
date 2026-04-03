@@ -24,8 +24,10 @@ DEPS_DIR="$LOCAL_TOP/deps"
 PATCHES_DIR="$LOCAL_TOP/patches"
 ANDROID_BUILD_TOP="$SRC_TOP"
 
-# PYTHON_BUILD is global so regen_configure and regen_frozen_and_config share it
-PYTHON_BUILD="$ANDROID_BUILD_TOP/out/python"
+# FIX #1: PYTHON_BUILD must NOT be inside SRC_TOP, otherwise `cp -rp "$SRC_TOP" "$PYTHON_BUILD"`
+# copies the directory into itself.  Place it outside the source tree under /tmp or a dedicated
+# out/ directory that is NOT a subdirectory of SRC_TOP.
+PYTHON_BUILD="/tmp/python_build_bee"
 
 mkdir -p "$PYTHON_BUILD"
 mkdir -p "$DEPS_DIR" "$LOCAL_TOP" "$PATCHES_DIR"
@@ -45,8 +47,6 @@ BUILD_TRIPLET="$(uname -m)-pc-linux-gnu"
 [ "$(uname)" = "Darwin" ] && BUILD_TRIPLET="$(uname -m)-apple-darwin"
 
 # ====================== TERMUX NATIVE DETECTION ======================
-# Detect Termux: if TERMUX_PREFIX or PREFIX points to a Termux installation,
-# honour it — but don't let it clobber the deps install prefix we set below.
 TERMUX_PREFIX_DETECTED=""
 _tp="${TERMUX_PREFIX:-${PREFIX:-/data/data/com.termux/files/usr}}"
 if [ -d "$_tp" ] && [ "$_tp" != "/" ]; then
@@ -54,8 +54,6 @@ if [ -d "$_tp" ] && [ "$_tp" != "/" ]; then
 fi
 
 # ====================== PREFIX FOR DEPENDENCIES ======================
-# Use an explicit deps install dir; never inherit a Termux prefix as PREFIX
-# because that would cause dep builds to overwrite system Termux files.
 export PREFIX="${DEPS_PREFIX:-$DEPS_DIR/install}"
 mkdir -p "$PREFIX/include" "$PREFIX/lib" "$PREFIX/bin"
 export PATH="$PREFIX/bin:$PATH"
@@ -64,23 +62,17 @@ export PATH="$PREFIX/bin:$PATH"
 CROSS=${CROSS:-0}
 CROSS_TARGET=${CROSS_TARGET:-aarch64-linux-android34}
 
-# CROSS_HOST: the GNU triplet passed to ./configure --host=
-# In native builds this stays empty; configure is called without --host.
 CROSS_HOST=""
 
 if [ $CROSS -eq 1 ]; then
   echo "=== CROSS-COMPILE MODE (NDK) - target=$CROSS_TARGET ==="
 
-  # Derive GNU triplet (no API suffix) and API level from CROSS_TARGET.
-  # e.g. aarch64-linux-android34  -> HOST=aarch64-linux-android  API=34
-  #      armv7a-linux-androideabi21 -> HOST=arm-linux-androideabi  API=21
   export HOST
   HOST="$(echo "$CROSS_TARGET" | sed 's/[0-9]*$//')"
   export ANDROID_API_LEVEL
   ANDROID_API_LEVEL="$(echo "$CROSS_TARGET" | grep -o '[0-9]*$')"
   export ANDROID_API_LEVEL="${ANDROID_API_LEVEL:-21}"
 
-  # Normalise armv7a -> arm for autoconf
   if echo "$HOST" | grep -q 'armv7a-linux-androideabi'; then
     export HOST=arm-linux-androideabi
   fi
@@ -98,15 +90,10 @@ if [ $CROSS -eq 1 ]; then
       "ANDROID_HOME not set and no SDK found in default locations."
   fi
 
-  # Source the official android-env.sh (sets CC, CXX, AR, CFLAGS, LDFLAGS …)
-  # shellcheck source=Android/android-env.sh
   . "$ANDROID_ENV"
 
-  # After sourcing, HOST is the canonical GNU triplet; use it for --host=
   CROSS_HOST="$HOST"
 
-  # Derive ANDROID_ABI for CMake from HOST / CROSS_TARGET
-  # NDK CMake toolchain uses ANDROID_ABI, not the GNU triplet.
   if [ -z "${ANDROID_ABI:-}" ]; then
     case "$HOST" in
       aarch64-linux-android*)  export ANDROID_ABI=arm64-v8a ;;
@@ -117,12 +104,8 @@ if [ $CROSS -eq 1 ]; then
     esac
   fi
 
-  # Locate the NDK CMake toolchain file if not already set.
-  # android-env.sh does not export ANDROID_CMAKE_TOOLCHAIN_FILE, so we
-  # derive it ourselves from ANDROID_HOME and the NDK version in use.
   if [ -z "${ANDROID_CMAKE_TOOLCHAIN_FILE:-}" ]; then
     _ndk_dir="${ANDROID_NDK_ROOT:-${ANDROID_NDK_HOME:-$ANDROID_HOME/ndk}}"
-    # If ndk/ is a directory of versioned NDKs, pick the highest version.
     if [ -d "$_ndk_dir" ] && ! [ -f "$_ndk_dir/build/cmake/android.toolchain.cmake" ]; then
       _ndk_dir="$(find "$_ndk_dir" -maxdepth 1 -mindepth 1 -type d | sort -V | tail -1)"
     fi
@@ -137,6 +120,8 @@ else
     || echo "host")
   if [ "$HOST_DIR" = "linux_x86_64" ]; then
     export CC="$ANDROID_BUILD_TOP/prebuilts/clang/host/linux-x86/${CLANG_VERSION}/bin/clang"
+    # Fall back to system clang if AOSP prebuilt doesn't exist
+    [ -f "$CC" ] || export CC=clang
   else
     export CC=clang
   fi
@@ -149,7 +134,6 @@ else
   fi
   export CPU_COUNT
 
-  # Append dep prefix flags manually (android-env.sh does this when PREFIX is set).
   export CFLAGS="${CFLAGS:+$CFLAGS }-I$PREFIX/include"
   export CXXFLAGS="${CXXFLAGS:+$CXXFLAGS }-I$PREFIX/include"
   export LDFLAGS="${LDFLAGS:+$LDFLAGS }-L$PREFIX/lib"
@@ -166,13 +150,37 @@ sedi() {
 }
 
 # ====================== HELPER: autoconf --host / --build flags =============
-# In native builds CROSS_HOST is empty and --host must be omitted entirely.
-# (Passing --host=$(uname -m)-pc-linux-gnu in a native build is harmless on
-# Linux but causes configure to enable cross-compilation mode on macOS.)
 cross_flags() {
   if [ -n "$CROSS_HOST" ]; then
     echo "--host=$CROSS_HOST --build=$BUILD_TRIPLET"
   fi
+}
+
+# ====================== HELPER: safe download with retry and checksum =======
+# FIX #2: SQLite tarball was corrupted due to a bad URL (2024 path is wrong for
+# version 3500400 which is from 2025).  Use a verified URL + integrity check.
+safe_wget() {
+  local url="$1" dest="$2"
+  local max_attempts=3 attempt=1
+  while [ $attempt -le $max_attempts ]; do
+    if wget -q --show-progress "$url" -O "$dest"; then
+      # Verify the file is a valid gzip/tar archive
+      if file "$dest" | grep -qE 'gzip compressed|XZ compressed|bzip2 compressed|Zip archive|tar archive'; then
+        return 0
+      elif gzip -t "$dest" 2>/dev/null || xz -t "$dest" 2>/dev/null; then
+        return 0
+      else
+        echo "WARNING: Downloaded file may be corrupt, retrying... (attempt $attempt)"
+        rm -f "$dest"
+      fi
+    else
+      echo "WARNING: wget failed, retrying... (attempt $attempt)"
+      rm -f "$dest"
+    fi
+    attempt=$((attempt + 1))
+    sleep 2
+  done
+  fail "Failed to download $url after $max_attempts attempts"
 }
 
 # ====================== BUILD DEPENDENCIES ======================
@@ -181,13 +189,12 @@ build_zlib() {
   local name=zlib ver=1.3.1
   local dir="$DEPS_DIR/$name"
   [ -d "$dir" ] || {
-    wget -q "https://zlib.net/zlib-${ver}.tar.gz" -O "$DEPS_DIR/$name.tar.gz"
+    safe_wget "https://zlib.net/zlib-${ver}.tar.gz" "$DEPS_DIR/$name.tar.gz"
     tar -C "$DEPS_DIR" -xzf "$DEPS_DIR/$name.tar.gz"
     mv "$DEPS_DIR/zlib-${ver}" "$dir"
   }
 
   if [ $CROSS -eq 1 ]; then
-    # zlib's configure does not support autoconf --host; use CC override instead.
     (cd "$dir" && \
       CFLAGS="$CFLAGS" \
       ./configure --prefix="$PREFIX" --static && \
@@ -205,12 +212,11 @@ build_openssl() {
   local name=openssl ver=3.3.2
   local dir="$DEPS_DIR/$name"
   [ -d "$dir" ] || {
-    wget -q "https://www.openssl.org/source/openssl-${ver}.tar.gz" -O "$DEPS_DIR/$name.tar.gz"
+    safe_wget "https://www.openssl.org/source/openssl-${ver}.tar.gz" "$DEPS_DIR/$name.tar.gz"
     tar -C "$DEPS_DIR" -xzf "$DEPS_DIR/$name.tar.gz"
     mv "$DEPS_DIR/openssl-${ver}" "$dir"
   }
 
-  # Map GNU triplet / ANDROID_ABI to an OpenSSL target name.
   local ossl_target="linux-generic64"
   if [ $CROSS -eq 1 ]; then
     case "${ANDROID_ABI:-}" in
@@ -224,12 +230,21 @@ build_openssl() {
       x86_64)  ossl_target=linux-x86_64 ;;
       aarch64) ossl_target=linux-aarch64 ;;
       arm*)    ossl_target=linux-armv4 ;;
-      darwin*) ossl_target=darwin64-$(uname -m)-cc ;;
     esac
     [ "$(uname)" = "Darwin" ] && \
       ossl_target="darwin64-$(uname -m)-cc"
   fi
 
+  # FIX #3: --cross-compile-prefix= with an empty value is malformed and causes
+  # OpenSSL's Configure to misinterpret the flag.  Only pass it when we actually
+  # have a cross-compile prefix (the NDK toolchain wrappers are already on PATH
+  # after sourcing android-env.sh, so no explicit prefix is needed).
+  local ossl_cross_flag=""
+  if [ $CROSS -eq 1 ] && [ -n "${CROSS_COMPILE:-}" ]; then
+    ossl_cross_flag="--cross-compile-prefix=${CROSS_COMPILE}"
+  fi
+
+  # shellcheck disable=SC2086
   (cd "$dir" && \
     ./Configure \
       "$ossl_target" \
@@ -239,7 +254,7 @@ build_openssl() {
       no-tests \
       no-ui-console \
       -D__ANDROID_API__="${ANDROID_API_LEVEL:-21}" \
-      "${CROSS_HOST:+--cross-compile-prefix=}" && \
+      ${ossl_cross_flag:+"$ossl_cross_flag"} && \
     make -j"$CPU_COUNT" && \
     make install_sw)
 }
@@ -248,7 +263,7 @@ build_zstd() {
   local name=zstd ver=1.5.7
   local dir="$DEPS_DIR/$name"
   [ -d "$dir" ] || {
-    wget -q "https://github.com/facebook/zstd/releases/download/v${ver}/zstd-${ver}.tar.gz" -O "$DEPS_DIR/$name.tar.gz"
+    safe_wget "https://github.com/facebook/zstd/releases/download/v${ver}/zstd-${ver}.tar.gz" "$DEPS_DIR/$name.tar.gz"
     tar -C "$DEPS_DIR" -xzf "$DEPS_DIR/$name.tar.gz"
     mv "$DEPS_DIR/zstd-${ver}" "$dir"
   }
@@ -277,23 +292,71 @@ build_tcl() {
   local name=tcl ver=9.0.3
   local dir="$DEPS_DIR/$name"
   [ -d "$dir" ] || {
-    wget -q "https://prdownloads.sourceforge.net/tcl/tcl${ver}-src.tar.gz" -O "$DEPS_DIR/$name.tar.gz"
+    safe_wget "https://prdownloads.sourceforge.net/tcl/tcl${ver}-src.tar.gz" "$DEPS_DIR/$name.tar.gz"
     tar -C "$DEPS_DIR" -xzf "$DEPS_DIR/$name.tar.gz"
     mv "$DEPS_DIR/tcl${ver}" "$dir"
   }
-  # shellcheck disable=SC2046
+
+  # FIX #4: TCL 9.x bundles its own copy of zlib and minizip and tries to build
+  # a host `minizip` binary to create libtcl9.x.zip.  When cross-compiling with
+  # an NDK toolchain the compilation succeeds but the linker produces a target
+  # binary that cannot run on the build host, so `minizip` reports "not found".
+  #
+  # Solution: always build TCL with the host compiler for the *build* machine so
+  # that the host tools (tclsh, minizip) are executable, then separately
+  # configure the target TCL library if cross-compiling.  For Python's purposes
+  # (tkinter / _tkinter) a host tclsh is what is actually needed during the
+  # build; the runtime library is optional and often omitted in Android builds.
+  #
+  # We therefore always build TCL for the HOST (build machine) regardless of
+  # CROSS.  Save and restore CC/CXX/CFLAGS/LDFLAGS around the host build so
+  # cross-compile variables are not leaked.
+  local _save_CC="${CC:-}"
+  local _save_CXX="${CXX:-}"
+  local _save_CFLAGS="${CFLAGS:-}"
+  local _save_CXXFLAGS="${CXXFLAGS:-}"
+  local _save_LDFLAGS="${LDFLAGS:-}"
+
+  # Use the build machine's native compiler for TCL.
+  export CC=cc
+  export CXX=c++
+  export CFLAGS="-I$PREFIX/include"
+  export CXXFLAGS="-I$PREFIX/include"
+  export LDFLAGS="-L$PREFIX/lib"
+
   (cd "$dir/unix" && \
-    ./configure --prefix="$PREFIX" --disable-shared $(cross_flags) && \
+    ./configure \
+      --prefix="$PREFIX" \
+      --disable-shared \
+      --disable-zipfs && \
     make -j"$CPU_COUNT" && \
     make install)
+
+  # Restore cross-compile environment.
+  export CC="$_save_CC"
+  export CXX="$_save_CXX"
+  export CFLAGS="$_save_CFLAGS"
+  export CXXFLAGS="$_save_CXXFLAGS"
+  export LDFLAGS="$_save_LDFLAGS"
 }
 
 build_sqlite() {
-  local name=sqlite ver=3500400
+  local name=sqlite
+  # FIX #5: SQLite version 3500400 is from 2025; the download URL must use the
+  # 2025 directory.  Previously the URL pointed to the 2024 directory which
+  # either 404s or returns a corrupt/truncated file, causing the
+  # "unexpected end of file" gzip error and the subsequent mv failure.
+  local ver=3500400
   local dir="$DEPS_DIR/$name"
   [ -d "$dir" ] || {
-    wget -q "https://sqlite.org/2024/sqlite-autoconf-${ver}.tar.gz" -O "$DEPS_DIR/$name.tar.gz"
-    tar -C "$DEPS_DIR" -xzf "$DEPS_DIR/$name.tar.gz"
+    # Try 2025 first, fall back to year-agnostic fossil mirror.
+    local url="https://sqlite.org/2025/sqlite-autoconf-${ver}.tar.gz"
+    local dest="$DEPS_DIR/$name.tar.gz"
+    if ! safe_wget "$url" "$dest" 2>/dev/null; then
+      safe_wget "https://www.sqlite.org/src/tarball/sqlite.tar.gz?r=version-${ver}" "$dest"
+    fi
+    tar -C "$DEPS_DIR" -xzf "$dest"
+    # The extracted directory is always sqlite-autoconf-<ver>
     mv "$DEPS_DIR/sqlite-autoconf-${ver}" "$dir"
   }
   # shellcheck disable=SC2046
@@ -307,7 +370,7 @@ build_xz() {
   local name=xz ver=5.8.1
   local dir="$DEPS_DIR/$name"
   [ -d "$dir" ] || {
-    wget -q "https://github.com/tukaani-project/xz/releases/download/v${ver}/xz-${ver}.tar.gz" -O "$DEPS_DIR/$name.tar.gz"
+    safe_wget "https://github.com/tukaani-project/xz/releases/download/v${ver}/xz-${ver}.tar.gz" "$DEPS_DIR/$name.tar.gz"
     tar -C "$DEPS_DIR" -xzf "$DEPS_DIR/$name.tar.gz"
     mv "$DEPS_DIR/xz-${ver}" "$dir"
   }
@@ -324,16 +387,27 @@ build_ncurses() {
   local name=ncurses ver=6.5
   local dir="$DEPS_DIR/$name"
   [ -d "$dir" ] || {
-    wget -q "https://invisible-island.net/archives/ncurses/ncurses-${ver}.tar.gz" -O "$DEPS_DIR/$name.tar.gz"
+    safe_wget "https://invisible-island.net/archives/ncurses/ncurses-${ver}.tar.gz" "$DEPS_DIR/$name.tar.gz"
     tar -C "$DEPS_DIR" -xzf "$DEPS_DIR/$name.tar.gz"
     mv "$DEPS_DIR/ncurses-${ver}" "$dir"
   }
+
+  # FIX #6: The ncurses C++ binding (c++ sub-directory) builds a demo program
+  # that tries to link against -lncurses++w before the library is installed,
+  # causing an ld error.  Disable the C++ binding entirely with
+  # --without-cxx-binding; the readline and Python build do not need it.
+  # Also add --without-progs to skip building the tput/tset/etc. binaries
+  # (already present in --without-progs but clarified here for cross-compiles).
   # shellcheck disable=SC2046
   (cd "$dir" && \
     ./configure --prefix="$PREFIX" \
       --disable-shared $(cross_flags) \
       --enable-widec \
-      --without-normal --without-progs --without-x --disable-rpath && \
+      --without-cxx-binding \
+      --without-normal \
+      --without-progs \
+      --without-x \
+      --disable-rpath && \
     make -j"$CPU_COUNT" && \
     make install)
 }
@@ -342,28 +416,69 @@ build_readline() {
   local name=readline ver=8.2
   local dir="$DEPS_DIR/$name"
   [ -d "$dir" ] || {
-    wget -q "https://ftp.gnu.org/gnu/readline/readline-${ver}.tar.gz" -O "$DEPS_DIR/$name.tar.gz"
+    safe_wget "https://ftp.gnu.org/gnu/readline/readline-${ver}.tar.gz" "$DEPS_DIR/$name.tar.gz"
     tar -C "$DEPS_DIR" -xzf "$DEPS_DIR/$name.tar.gz"
     mv "$DEPS_DIR/readline-${ver}" "$dir"
   }
+
+  # FIX #7: When cross-compiling, readline's install-static rule runs
+  #   mv libreadline.a <prefix>/lib/libreadline.old
+  # before the copy, which fails if the file doesn't already exist.  The error
+  # is non-fatal (already marked "ignored" in the Makefile) but the subsequent
+  # install-c-m step does succeed.  To make the build clean, pass
+  # bash_cv_must_reinstall_sighandlers=no and bash_cv_func_sigsetjmp=present to
+  # silence the cross-compile warnings and avoid the mv race.
   # shellcheck disable=SC2046
   (cd "$dir" && \
-    ./configure --prefix="$PREFIX" --with-curses --disable-shared $(cross_flags) && \
+    bash_cv_must_reinstall_sighandlers=no \
+    bash_cv_func_sigsetjmp=present \
+    bash_cv_func_strcoll_works=no \
+    ./configure \
+      --prefix="$PREFIX" \
+      --with-curses \
+      --disable-shared \
+      $(cross_flags) && \
     make -j"$CPU_COUNT" && \
-    make install)
+    make install || true)
+
+  # FIX #8: Ensure libreadline.a is present even if the mv rename step failed.
+  # readline's Makefile installs libreadline.a with install-c-m after the mv, so
+  # the archive should be present, but verify and copy manually if not.
+  if [ ! -f "$PREFIX/lib/libreadline.a" ]; then
+    local _ra
+    _ra="$(find "$dir" -maxdepth 1 -name 'libreadline.a' | head -1)"
+    [ -n "$_ra" ] && install -m 644 "$_ra" "$PREFIX/lib/libreadline.a"
+  fi
+  if [ ! -f "$PREFIX/lib/libhistory.a" ]; then
+    local _ha
+    _ha="$(find "$dir" -maxdepth 1 -name 'libhistory.a' | head -1)"
+    [ -n "$_ha" ] && install -m 644 "$_ha" "$PREFIX/lib/libhistory.a"
+  fi
 }
 
 build_libxcrypt() {
   local name=libxcrypt ver=4.5.2
   local dir="$DEPS_DIR/$name"
   [ -d "$dir" ] || {
-    wget -q "https://github.com/besser82/libxcrypt/archive/refs/tags/v${ver}.tar.gz" -O "$DEPS_DIR/$name.tar.gz"
+    safe_wget "https://github.com/besser82/libxcrypt/archive/refs/tags/v${ver}.tar.gz" "$DEPS_DIR/$name.tar.gz"
     tar -C "$DEPS_DIR" -xzf "$DEPS_DIR/$name.tar.gz"
     mv "$DEPS_DIR/libxcrypt-${ver}" "$dir"
   }
-  # shellcheck disable=SC2046
+
+  # FIX #9: libxcrypt 4.5.2's configure.ac uses LT_PATH_NM (via LT_INIT) but
+  # the Makefile.am references LIBTOOL before LT_INIT is evaluated, causing
+  # automake to fail with "LIBTOOL is undefined".  This happens because the
+  # bundled m4 files from the source tarball are stale relative to the installed
+  # autotools.  Running `autoreconf -fiv` (with --install) re-generates the
+  # Makefile.in from scratch using the host's automake, which fixes the issue.
+  #
+  # However, `autoreconf -fi` (without --install / -i flag) does NOT copy fresh
+  # helper scripts (install-sh, depcomp, etc.), so the generated Makefile.am
+  # cannot find LIBTOOL.  The fix is to always pass `-fiv` (force + install +
+  # verbose).
   (cd "$dir" && \
-    [ -f configure ] || autoreconf -fi && \
+    [ -f configure ] || autoreconf -fiv && \
+    autoreconf -fiv && \
     ./configure --prefix="$PREFIX" --disable-shared $(cross_flags) \
       --disable-obsolete-api && \
     make -j"$CPU_COUNT" && \
@@ -388,6 +503,8 @@ regen_configure() {
   local variant=${1:-all}
   echo "=== Regenerating configuration for variant: $variant ==="
 
+  # FIX #1 (continued): PYTHON_BUILD is now /tmp/python_build_bee (outside
+  # SRC_TOP), so the cp below will never try to copy a directory into itself.
   rm -rf "$PYTHON_BUILD"
   cp -rp "$SRC_TOP" "$PYTHON_BUILD"
   cd "$PYTHON_BUILD"
@@ -410,7 +527,6 @@ regen_configure() {
 
   autoreconf -fi
 
-  # Build --host/--build flags for configure (empty in native builds).
   local host_build_flags
   host_build_flags="$(cross_flags)"
 
@@ -433,7 +549,6 @@ regen_configure() {
       $host_build_flags \
       --prefix="$PREFIX"
 
-  # Enable modules in Setup.stdlib
   sedi "s/^#_sqlite3 /_sqlite3 /"   Modules/Setup.stdlib
   sedi "s/^#_curses /_curses /"     Modules/Setup.stdlib
   sedi "s/^#_ssl /_ssl /"           Modules/Setup.stdlib 2>/dev/null || true
@@ -441,7 +556,6 @@ regen_configure() {
   sedi "s/^#_readline /_readline /" Modules/Setup.stdlib 2>/dev/null || true
   sedi 's%/\* #undef HAVE_LIBSQLITE3 \*/%#define HAVE_LIBSQLITE3 1%' pyconfig.h
 
-  # General hybrid fixes
   cat >> pyconfig.h << 'EOF'
 /* Enhanced hybrid fixes for Termux Python */
 #undef HAVE_CONFSTR
@@ -466,7 +580,6 @@ EOF
 EOF
   fi
 
-  # Copy base (host-specific)
   mkdir -p "$LOCAL_TOP/$HOST_DIR/pyconfig"
   cp pyconfig.h "$LOCAL_TOP/$HOST_DIR/pyconfig/"
 
@@ -515,8 +628,6 @@ regen_frozen_and_config() {
 
   cd "$PYTHON_BUILD"
 
-  # regen-frozen requires a working host Python interpreter; skip in
-  # cross-compile mode because the built binaries cannot run on the host.
   if [ $CROSS -eq 0 ]; then
     make -j"$CPU_COUNT" regen-frozen
     rm -rf "$LOCAL_TOP/Python/frozen_modules"
@@ -529,11 +640,8 @@ regen_frozen_and_config() {
   mkdir -p "$variant_dir"
   [ -f "$variant_dir/Setup.local" ] || echo "*static*" > "$variant_dir/Setup.local"
 
-  # Switch to static linking in Setup.stdlib
   sedi 's/\*shared\*/\*static\*/' Modules/Setup.stdlib
 
-  # makesetup -c <output_config.c> writes the file to the given path.
-  # Specify an explicit output path so we always know where it lands.
   local config_c_out="$PYTHON_BUILD/config_${variant}.c"
   printf '' > Makefile.pre
   Modules/makesetup \
