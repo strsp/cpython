@@ -203,7 +203,7 @@ build_tk() {
     mv "$DEPS_DIR/tk${ver}" "$dir"
   }
   (cd "$dir/unix" && \
-    ./configure --prefix="$PREFIX" --disable-shared --enable-static \
+    ./configure --prefix="$PREFIX" --disable-shared  --host=aarch64-linux-android --build=x86_64-pc-linux-gnu --enable-static \
       --with-tcl="$DEPS_DIR/tcl/unix" --without-x && \
     make -j"$CPU_COUNT" && \
     make install)
@@ -217,8 +217,9 @@ build_sqlite() {
     tar -C "$DEPS_DIR" -xzf "$DEPS_DIR/$name.tar.gz"
     mv "$DEPS_DIR/sqlite-autoconf-${ver}" "$dir"
   }
+
   (cd "$dir" && \
-    ./configure --prefix="$PREFIX" --disable-shared --enable-static && \
+    ./configure --prefix="$PREFIX" --disable-shared --host=aarch64-linux-android --build=x86_64-pc-linux-gnu --enable-static && \
     make -j"$CPU_COUNT" && \
     make install)
 }
@@ -232,7 +233,7 @@ build_xz() {
     mv "$DEPS_DIR/xz-${ver}" "$dir"
   }
   (cd "$dir" && \
-    ./configure --prefix="$PREFIX" --disable-shared --enable-static \
+    ./configure --prefix="$PREFIX" --disable-shared --host=aarch64-linux-android --build=x86_64-pc-linux-gnu --enable-static \
       --disable-xz --disable-xzdec --disable-lzmadec --disable-lzmainfo \
       --disable-lzma-links --disable-scripts --disable-doc && \
     make -j"$CPU_COUNT" && \
@@ -249,7 +250,7 @@ build_ncurses() {
   }
   (cd "$dir" && \
     ./configure --prefix="$PREFIX" \
-      --disable-shared --enable-static \
+      --disable-shared --host=aarch64-linux-android --build=x86_64-pc-linux-gnu --enable-static \
       --enable-widec \
       --without-normal --without-progs --without-x --disable-rpath && \
     make -j"$CPU_COUNT" && \
@@ -265,7 +266,7 @@ build_readline() {
     mv "$DEPS_DIR/readline-${ver}" "$dir"
   }
   (cd "$dir" && \
-    ./configure --prefix="$PREFIX" --with-curses --disable-shared --enable-static && \
+    ./configure --prefix="$PREFIX" --with-curses --disable-shared --host=aarch64-linux-android --build=x86_64-pc-linux-gnu --enable-static && \
     make -j"$CPU_COUNT" && \
     make install)
 }
@@ -280,7 +281,7 @@ build_libxcrypt() {
   }
   (cd "$dir" && \
     [ -f configure ] || autoreconf -fi && \
-    ./configure --prefix="$PREFIX" --disable-shared --enable-static --disable-obsolete-api && \
+    ./configure --prefix="$PREFIX" --disable-shared --enable-static --host=aarch64-linux-android --build=x86_64-pc-linux-gnu --disable-obsolete-api && \
     make -j"$CPU_COUNT" && \
     make install)
 }
