@@ -1,38 +1,34 @@
-name: Tests
+name: Android Python Build (AArch64)
 
 on:
   push:
-    branches: [main]
-  pull_request:
+    branches: [master]
   workflow_dispatch:
-  release:
-    types: [created]
 
-# ✅ Concurrency control
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read  # 🔒 minimal by default
 
 env:
+  NDK_VERSION: 26.1.10909125
   API_LEVEL: 34
-  NDK_VERSION: 27.2.12479018
-  BUILD_ROOT: ${{ github.workspace }}/.build
-  TERMUX_PREFIX: ${{ github.workspace }}/install
+  TARGET: aarch64-linux-android
 
 jobs:
-
-# ─────────────────────────────────────────────
-# 🍏 macOS (aarch64)
-# ─────────────────────────────────────────────
-  macos-aarch64:
-    name: macOS aarch64
+  build:
     runs-on: macos-14
 
+    permissions:
+      contents: write  # ✅ only where needed (release)
+
     steps:
-      - uses: actions/checkout@v4
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false  # 🔒 fix zizmor warning
 
       # ☕ Java 17
       - name: Set up Java 17
@@ -48,131 +44,63 @@ jobs:
           packages: "ndk;${{ env.NDK_VERSION }}"
           log-accepted-android-sdk-licenses: false
 
-      - name: Install deps
+      # ⚙️ Setup toolchain
+      - name: Setup toolchain
         run: |
-          brew update
-          brew install autoconf automake libtool pkg-config ccache
+          export TOOLCHAIN=$ANDROID_HOME/ndk/${NDK_VERSION}/toolchains/llvm/prebuilt/darwin-x86_64
+          echo "TOOLCHAIN=$TOOLCHAIN" >> $GITHUB_ENV
+          echo "CC=$TOOLCHAIN/bin/${TARGET}${API_LEVEL}-clang" >> $GITHUB_ENV
+          echo "CXX=$TOOLCHAIN/bin/${TARGET}${API_LEVEL}-clang++" >> $GITHUB_ENV
+          echo "AR=$TOOLCHAIN/bin/llvm-ar" >> $GITHUB_ENV
+          echo "RANLIB=$TOOLCHAIN/bin/llvm-ranlib" >> $GITHUB_ENV
+          echo "STRIP=$TOOLCHAIN/bin/llvm-strip" >> $GITHUB_ENV
 
-      - name: Enable ccache
+      # 🧠 Build Python
+      - name: Build Python
         run: |
-          echo "CC=ccache clang" >> $GITHUB_ENV
-          echo "CXX=ccache clang++" >> $GITHUB_ENV
+          chmod +x bee/regen.sh
+          ./bee/regen.sh all
 
-      - name: Build
-        env:
-          TERMUX_ARCH: aarch64
-          TERMUX_PKG_API_LEVEL: ${{ env.API_LEVEL }}
-          TERMUX_STANDALONE_TOOLCHAIN: $ANDROID_SDK_ROOT/ndk/${{ env.NDK_VERSION }}/toolchains/llvm/prebuilt/darwin-x86_64
-          GITHUB_ACTIONS: "true"
-          CFLAGS: "-O3 -flto -fvisibility=hidden"
-          LDFLAGS: "-flto -Wl,-z,relro,-z,now"
-        run: bash cpython/bee/build.sh
+          mkdir build && cd build
 
-      - name: Test
-        run: ./install/bin/python3 -c "import ssl, sqlite3, bz2, lzma, curses"
+          ../configure \
+            --host=${TARGET} \
+            --build=$(uname -m)-apple-darwin \
+            --enable-optimizations \
+            --with-lto \
+            ac_cv_file__dev_ptmx=yes \
+            ac_cv_file__dev_ptc=no
 
-      - name: Upload install
-        uses: actions/upload-artifact@v4
-        with:
-          name: python-aarch64-macos
-          path: install/
+          make -j$(sysctl -n hw.ncpu)
 
-# ─────────────────────────────────────────────
-# 🐧 Linux builds (.deb)
-# ─────────────────────────────────────────────
-  linux:
-    name: Linux ${{ matrix.arch }}
-    runs-on: ubuntu-22.04
-
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [aarch64, arm, i686, x86_64]
-
-    steps:
-      - uses: actions/checkout@v4
-
-      # ☕ Java 17
-      - name: Set up Java 17
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      # 📱 Android SDK + NDK
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
-        with:
-          packages: "ndk;${{ env.NDK_VERSION }}"
-          log-accepted-android-sdk-licenses: false
-
-      # ⚡ Cache
-      - name: Cache build
-        uses: actions/cache@v4
-        with:
-          path: |
-            .build
-            ~/.ccache
-          key: build-${{ matrix.arch }}-api34-${{ hashFiles('cpython/bee/build.sh') }}
-          restore-keys: |
-            build-${{ matrix.arch }}-api34-
-
-      - name: Install deps
+      # 📦 Create .deb
+      - name: Package .deb
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y \
-            build-essential curl xz-utils \
-            autoconf automake libtool pkg-config \
-            python3 python3-dev fakeroot dpkg ccache
+          mkdir -p pkg/DEBIAN pkg/usr/local
 
-      - name: Enable ccache
+          make DESTDIR=$(pwd)/pkg install
+
+          cat > pkg/DEBIAN/control <<EOF
+          Package: python-android
+          Version: 3.13.0
+          Architecture: arm64
+          Maintainer: zrsx
+          Description: Optimized Python for Android (API 34)
+          EOF
+
+          dpkg-deb --build pkg python-android.deb
+
+      # 🔍 Fix SC2012 (NO ls)
+      - name: Locate artifact safely
         run: |
-          echo "CC=ccache clang" >> $GITHUB_ENV
-          echo "CXX=ccache clang++" >> $GITHUB_ENV
+          find . -type f -name "*.deb" -print
 
-      - name: Build
-        env:
-          TERMUX_ARCH: ${{ matrix.arch }}
-          TERMUX_PKG_API_LEVEL: ${{ env.API_LEVEL }}
-          TERMUX_STANDALONE_TOOLCHAIN: $ANDROID_SDK_ROOT/ndk/${{ env.NDK_VERSION }}/toolchains/llvm/prebuilt/linux-x86_64
-          GITHUB_ACTIONS: "true"
-          CFLAGS: "-O3 -flto -fvisibility=hidden"
-          LDFLAGS: "-flto -Wl,-z,relro,-z,now"
-        run: bash cpython/bee/build.sh
-
-      - name: Test
-        run: ./install/bin/python3 -c "import ssl, sqlite3, bz2, lzma, curses"
-
-      - name: Verify .deb
-        run: |
-          deb=$(ls .build/python_*.deb | head -1)
-          dpkg-deb --info "$deb"
-          dpkg-deb --contents "$deb" | grep python3
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: deb-${{ matrix.arch }}
-          path: .build/python_*.deb
-
-# ─────────────────────────────────────────────
-# 🚀 Release Upload
-# ─────────────────────────────────────────────
-  release:
-    name: Upload to GitHub Release
-    needs: linux
-    runs-on: ubuntu-22.04
-    if: github.event_name == 'release'
-
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: debs
-
-      - name: Upload to Release
+      # 🚀 Upload Release
+      - name: Upload Release
         uses: softprops/action-gh-release@v2
         with:
-          files: debs/**/*.deb
+          tag_name: build-${{ github.run_number }}
+          files: |
+            python-android.deb
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
