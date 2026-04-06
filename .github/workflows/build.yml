@@ -71,8 +71,8 @@ jobs:
           CROSS_TARGET: ${{ github.event.inputs.cross_target }}
           API_LEVEL: ${{ env.ANDROID_API }}
         run: |
-          chmod +x ./build.sh
-          ./build.sh
+          chmod +x ./bee/build.sh
+          ./bee/build.sh
 
       - name: List artifacts
         run: |
