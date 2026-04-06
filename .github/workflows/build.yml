@@ -1,106 +1,119 @@
-name: Android Python Build (AArch64)
+name: Build Python (AOSP + Termux Hybrid)
 
 on:
   push:
-    branches: [master]
+    branches: [ "main" ]
+    tags:
+      - "v*"
+  pull_request:
+    branches: [ "main" ]
   workflow_dispatch:
+    inputs:
+      cross_target:
+        description: 'CROSS_TARGET (e.g. aarch64-linux-android34)'
+        required: false
+        default: 'aarch64-linux-android34'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
-  contents: read  # 🔒 minimal by default
+  contents: read
 
 env:
-  NDK_VERSION: 26.1.10909125
-  API_LEVEL: 34
-  TARGET: aarch64-linux-android
+  NDK_VERSION: r27c
+  ANDROID_API: 34
 
 jobs:
   build:
-    runs-on: macos-14
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
 
     permissions:
-      contents: write  # ✅ only where needed (release)
+      contents: write   # required only for release upload
 
     steps:
-      - name: 📥 Checkout
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          persist-credentials: false  # 🔒 fix zizmor warning
+          persist-credentials: false
 
-      # ☕ Java 17
-      - name: Set up Java 17
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Java 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
-      # 📱 Android SDK + NDK
-      - name: Set up Android SDK
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v4
         with:
           packages: "ndk;${{ env.NDK_VERSION }}"
-          log-accepted-android-sdk-licenses: false
+          log-accepted-android-sdk-licenses: true
 
-      # ⚙️ Setup toolchain
-      - name: Setup toolchain
+      - name: Install dependencies
         run: |
-          export TOOLCHAIN=$ANDROID_HOME/ndk/${NDK_VERSION}/toolchains/llvm/prebuilt/darwin-x86_64
-          echo "TOOLCHAIN=$TOOLCHAIN" >> $GITHUB_ENV
-          echo "CC=$TOOLCHAIN/bin/${TARGET}${API_LEVEL}-clang" >> $GITHUB_ENV
-          echo "CXX=$TOOLCHAIN/bin/${TARGET}${API_LEVEL}-clang++" >> $GITHUB_ENV
-          echo "AR=$TOOLCHAIN/bin/llvm-ar" >> $GITHUB_ENV
-          echo "RANLIB=$TOOLCHAIN/bin/llvm-ranlib" >> $GITHUB_ENV
-          echo "STRIP=$TOOLCHAIN/bin/llvm-strip" >> $GITHUB_ENV
+          python -m pip install --upgrade pip
+          pip install meson ninja
 
-      # 🧠 Build Python
-      - name: Build Python
+      - name: Build (build.sh)
         run: |
-          chmod +x bee/regen.sh
-          ./bee/regen.sh all
+          chmod +x ./build.sh
+          export API_LEVEL=${{ env.ANDROID_API }}
+          export CROSS_TARGET=${{ github.event.inputs.cross_target }}
+          ./build.sh
 
-          mkdir build && cd build
-
-          ../configure \
-            --host=${TARGET} \
-            --build=$(uname -m)-apple-darwin \
-            --enable-optimizations \
-            --with-lto \
-            ac_cv_file__dev_ptmx=yes \
-            ac_cv_file__dev_ptc=no
-
-          make -j$(sysctl -n hw.ncpu)
-
-      # 📦 Create .deb
-      - name: Package .deb
+      - name: List artifacts
         run: |
-          mkdir -p pkg/DEBIAN pkg/usr/local
+          ls -lah
 
-          make DESTDIR=$(pwd)/pkg install
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.os }}
+          path: |
+            *.deb
+            build/*.deb
+            **/*.deb
 
-          cat > pkg/DEBIAN/control <<EOF
-          Package: python-android
-          Version: 3.13.0
-          Architecture: arm64
-          Maintainer: zrsx
-          Description: Optimized Python for Android (API 34)
-          EOF
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
 
-          dpkg-deb --build pkg python-android.deb
+    permissions:
+      contents: write
 
-      # 🔍 Fix SC2012 (NO ls)
-      - name: Locate artifact safely
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release files
         run: |
-          find . -type f -name "*.deb" -print
+          mkdir -p release
+          find artifacts -name "*.deb" -exec cp {} release/ \;
 
-      # 🚀 Upload Release
-      - name: Upload Release
+      - name: Create GitHub Release and upload assets
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          files: |
-            python-android.deb
+          files: release/*.deb
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
