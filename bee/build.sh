@@ -115,12 +115,12 @@ _MICRO_VERSION="${TERMUX_PKG_VERSION##*.}"      # 12
 # Dependency source versions (pinned, verified April 2026)
 _VER_AUTOCONF="2.71"
 _VER_AUTOMAKE="1.16.5"
-_VER_LIBXCRYPT="4.4.38"
-_VER_NCURSES="6.5"
-_VER_READLINE="8.2"
-_VER_OPENSSL="3.4.1"
-_VER_TCL="8.6.15"
-_VER_TK="8.6.15"
+_VER_LIBXCRYPT="4.5.2"
+_VER_NCURSES="6.6"
+_VER_READLINE="8.3"
+_VER_OPENSSL="3.5.5"
+_VER_TCL="9.0.3"
+_VER_TK="9.0.3"
 
 TERMUX_PKG_AUTO_UPDATE=false
 # Provides python3 alias — NEVER bare "python"
