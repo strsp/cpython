@@ -1,120 +1,617 @@
-name: Build Python (AOSP + Termux Hybrid)
+# =============================================================================
+# .github/workflows/build.yml
+#
+# Builds Python 3.13 for Android (all ABIs, a wide API-level matrix) and
+# produces a .deb package per target.
+#
+# Repository layout assumed:
+#   cpython/          ← CPython source root (git submodule or inline)
+#   cpython/bee/      ← build scripts live here
+#   cpython/bee/build.sh
+#   cpython/bee/patches/
+#
+# Triggered on:
+#   • Every push / PR to branch  master
+#   • Manual run (workflow_dispatch) with configurable inputs
+#   • Weekly schedule (Monday 03:00 UTC) to catch upstream regressions
+#
+# Jobs overview:
+#   setup-autotools  → build autoconf 2.71 + automake 1.16.5 as a cached artifact
+#                      (macOS only; Linux runners already ship them pre-installed)
+#   build-linux      → cross-compile for all 4 ABIs × API levels on Ubuntu 24.04
+#   build-macos      → cross-compile for aarch64 + x86_64 on macOS 15
+#   build-windows    → cross-compile via MSYS2 on Windows 2025
+#   verify           → structural checks on the produced .deb files
+#   release          → (on tag push) attach .deb files to a GitHub Release
+# =============================================================================
+
+name: "Python 3.13 Android Build"
 
 on:
   push:
-    branches: [ "master" ]
-    tags:
-      - "v*"
+    branches: ["master"]
+    tags:     ["v*"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["master"]
+  schedule:
+    # Weekly regression check: Monday 03:00 UTC
+    - cron: "0 3 * * 1"
   workflow_dispatch:
     inputs:
-      cross_target:
-        description: 'CROSS_TARGET (e.g. aarch64-linux-android34)'
+      arch:
+        description: "Target ABI (leave empty to build all)"
         required: false
-        default: 'aarch64-linux-android34'
+        default: ""
+        type: choice
+        options: ["", "aarch64", "arm", "i686", "x86_64"]
+      api_level:
+        description: "Android API level (leave empty to build matrix)"
+        required: false
+        default: ""
+      debug:
+        description: "Enable extra debug output in build.sh"
+        required: false
+        default: false
+        type: boolean
 
+# Cancel in-flight runs of the same workflow on the same branch/PR
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: "${{ github.workflow }}-${{ github.ref }}"
   cancel-in-progress: true
 
+# Minimum permissions needed — jobs escalate only where required
 permissions:
   contents: read
 
+# =============================================================================
+# Reusable environment variables shared across jobs
+# =============================================================================
 env:
-  NDK_VERSION: 27.3.13750724
-  ANDROID_API: 34
-  TERMUX_PKG_API_LEVEL: 34
-jobs:
-  build:
-    name: Build on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+  # NDK version pinned here — update in one place
+  NDK_VERSION: "27.2.12479018"          # NDK r27c (stable LTS, Jan 2026 default)
+  NDK_VERSION_SHORT: "r27c"
+  # Python version from build.sh metadata (informational only — build.sh owns it)
+  PYTHON_VERSION: "3.13.12"
+  # Where artefacts land inside the runner workspace
+  BUILD_ROOT:     "${{ github.workspace }}/_build"
+  INSTALL_ROOT:   "${{ github.workspace }}/_install"
+  # Cache key base: increment to bust all caches
+  CACHE_KEY_BASE: "bee-v1"
 
+# =============================================================================
+# §1  Reusable matrix definitions (via JSON) — referenced in build jobs
+# =============================================================================
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # Precondition: resolve which arch/api combos to build.
+  # Outputs a JSON matrix so we don't repeat it in every job.
+  # ---------------------------------------------------------------------------
+  matrix-config:
+    name: "Resolve build matrix"
+    runs-on: ubuntu-24.04
+    outputs:
+      linux-matrix:   ${{ steps.gen.outputs.linux }}
+      macos-matrix:   ${{ steps.gen.outputs.macos }}
+      windows-matrix: ${{ steps.gen.outputs.windows }}
+    steps:
+      - name: Generate matrix JSON
+        id: gen
+        shell: bash
+        run: |
+          # Full arch list unless user narrowed it via workflow_dispatch
+          ARCHES='["aarch64","arm","i686","x86_64"]'
+          if [[ -n "${{ github.event.inputs.arch }}" ]]; then
+            ARCHES='["${{ github.event.inputs.arch }}"]'
+          fi
+
+          # Full API level list unless user narrowed it
+          APIS='[21,24,28,30,33,34,35,36]'
+          if [[ -n "${{ github.event.inputs.api_level }}" ]]; then
+            APIS='[${{ github.event.inputs.api_level }}]'
+          fi
+
+          # Linux: all arches × all API levels
+          LINUX=$(jq -cn \
+            --argjson a "${ARCHES}" \
+            --argjson l "${APIS}" \
+            '{arch: $a, api: $l}')
+
+          # macOS: only 64-bit arches (arm is unreliable via Darwin NDK), reduced API set
+          MACOS=$(jq -cn \
+            '{arch: ["aarch64","x86_64"], api: [24,35,36]}')
+
+          # Windows/MSYS2: 64-bit only, reduced set
+          WINDOWS=$(jq -cn \
+            '{arch: ["aarch64","x86_64"], api: [24,35]}')
+
+          echo "linux=${LINUX}"   >> "$GITHUB_OUTPUT"
+          echo "macos=${MACOS}"   >> "$GITHUB_OUTPUT"
+          echo "windows=${WINDOWS}" >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------------
+  # §2  Linux cross-compile (Ubuntu 24.04)
+  #
+  # Ubuntu 24.04 ships autoconf 2.71 and automake 1.16.5 pre-installed, so
+  # build.sh's skip logic in build_autoconf271/build_automake fires immediately.
+  # The NDK is available pre-installed at $ANDROID_NDK_ROOT.
+  # ---------------------------------------------------------------------------
+  build-linux:
+    name: "Linux  ${{ matrix.arch }} / API ${{ matrix.api }}"
+    needs: matrix-config
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.matrix-config.outputs.linux-matrix) }}
+
+    steps:
+      # ── 1. Source ───────────────────────────────────────────────────────────
+      - name: "Checkout (branch: master)"
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 1
+
+      # ── 2. Dependency cache ─────────────────────────────────────────────────
+      # Cache downloaded dep tarballs (not the built artefacts — those are arch-
+      # specific).  Key includes the dep versions from build.sh to auto-invalidate.
+      - name: "Cache downloaded dep sources"
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.BUILD_ROOT }}/deps
+          key: |
+            ${{ env.CACHE_KEY_BASE }}-deps-linux-${{ hashFiles('cpython/bee/build.sh') }}
+          restore-keys: |
+            ${{ env.CACHE_KEY_BASE }}-deps-linux-
+
+      # ── 3. System packages ──────────────────────────────────────────────────
+      # autoconf 2.71 and automake 1.16.5 are pre-installed on ubuntu-24.04.
+      # We install only what's missing: fakeroot, dpkg-dev, libtool, pkg-config.
+      - name: "Install host build tools"
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            autoconf \
+            automake \
+            libtool \
+            pkg-config \
+            fakeroot \
+            dpkg-dev \
+            curl \
+            ca-certificates \
+            xz-utils \
+            python3 \
+            python3-dev
+          echo "autoconf: $(autoconf --version | head -1)"
+          echo "automake: $(automake --version | head -1)"
+          echo "libtool:  $(libtool  --version | head -1)"
+
+      # ── 4. Android NDK ──────────────────────────────────────────────────────
+      # NDK 27 is pre-installed on ubuntu-24.04 runners and is the default from
+      # January 12 2026.  We locate it and export the toolchain path.
+      - name: "Locate Android NDK ${{ env.NDK_VERSION_SHORT }}"
+        id: ndk
+        run: |
+          # Try the pre-installed NDK first
+          PREINSTALLED="${ANDROID_NDK_ROOT:-}"
+          if [[ -z "${PREINSTALLED}" ]] && [[ -d "/usr/local/lib/android/sdk/ndk" ]]; then
+            PREINSTALLED="$(ls -d /usr/local/lib/android/sdk/ndk/* 2>/dev/null | sort -V | tail -1)"
+          fi
+
+          if [[ -n "${PREINSTALLED}" ]] && [[ -d "${PREINSTALLED}" ]]; then
+            TC="${PREINSTALLED}/toolchains/llvm/prebuilt/linux-x86_64"
+            echo "NDK located (pre-installed): ${PREINSTALLED}"
+          else
+            echo "Pre-installed NDK not found — downloading ${{ env.NDK_VERSION_SHORT }}"
+            curl -fSL --retry 3 \
+              "https://dl.google.com/android/repository/android-ndk-${{ env.NDK_VERSION_SHORT }}-linux.zip" \
+              -o /tmp/ndk.zip
+            sudo unzip -q /tmp/ndk.zip -d /opt
+            TC="/opt/android-ndk-${{ env.NDK_VERSION_SHORT }}/toolchains/llvm/prebuilt/linux-x86_64"
+          fi
+
+          echo "toolchain=${TC}" >> "$GITHUB_OUTPUT"
+          echo "TERMUX_STANDALONE_TOOLCHAIN=${TC}" >> "$GITHUB_ENV"
+          echo "NDK toolchain: ${TC}"
+          "${TC}/bin/clang" --version | head -1
+
+      # ── 5. Build ────────────────────────────────────────────────────────────
+      - name: "Build python ${{ env.PYTHON_VERSION }} (${{ matrix.arch }}, API ${{ matrix.api }})"
+        env:
+          TERMUX_ARCH:             "${{ matrix.arch }}"
+          TERMUX_PKG_API_LEVEL:    "${{ matrix.api }}"
+          TERMUX_PREFIX:           "${{ env.INSTALL_ROOT }}"
+          BUILD_ROOT:              "${{ env.BUILD_ROOT }}"
+          GITHUB_ACTIONS:          "true"
+        run: |
+          set -euxo pipefail
+          bash cpython/bee/build.sh
+
+      # ── 6. Upload .deb ──────────────────────────────────────────────────────
+      - name: "Upload .deb artefact"
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: "python_${{ env.PYTHON_VERSION }}_${{ matrix.arch }}_api${{ matrix.api }}-linux"
+          path: "${{ env.BUILD_ROOT }}/python_*.deb"
+          retention-days: 30
+          if-no-files-found: error
+
+      # ── 7. Upload install tree on failure (for debugging) ──────────────────
+      - name: "Upload install tree (on failure)"
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: "debug-install-${{ matrix.arch }}-api${{ matrix.api }}-linux"
+          path: "${{ env.INSTALL_ROOT }}/"
+          retention-days: 5
+
+      # ── 8. Upload build logs on failure ─────────────────────────────────────
+      - name: "Upload build logs (on failure)"
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: "debug-logs-${{ matrix.arch }}-api${{ matrix.api }}-linux"
+          path: "${{ env.BUILD_ROOT }}/**/*.log"
+          retention-days: 3
+
+  # ---------------------------------------------------------------------------
+  # §3  macOS cross-compile (macOS 15, Apple Silicon)
+  #
+  # macOS 15 runners do NOT pre-install autoconf/automake.
+  # We install them via Homebrew before calling build.sh.
+  # build.sh's skip logic then detects them and avoids the source build.
+  # ---------------------------------------------------------------------------
+  build-macos:
+    name: "macOS  ${{ matrix.arch }} / API ${{ matrix.api }}"
+    needs: matrix-config
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.matrix-config.outputs.macos-matrix) }}
+
+    steps:
+      - name: "Checkout (branch: master)"
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 1
+
+      - name: "Cache downloaded dep sources"
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.BUILD_ROOT }}/deps
+          key: |
+            ${{ env.CACHE_KEY_BASE }}-deps-macos-${{ hashFiles('cpython/bee/build.sh') }}
+          restore-keys: |
+            ${{ env.CACHE_KEY_BASE }}-deps-macos-
+
+      # Install autoconf 2.71, automake 1.16.x, libtool via Homebrew.
+      # Homebrew on macOS-15 provides recent versions.
+      # We add Homebrew bin to PATH so build.sh finds them immediately.
+      - name: "Install host build tools (Homebrew)"
+        run: |
+          # Homebrew is pre-installed but not on PATH by default on GHA macOS
+          eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv)"
+          brew install autoconf automake libtool pkg-config curl
+          echo "$(brew --prefix autoconf)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix automake)/bin"  >> "$GITHUB_PATH"
+          echo "$(brew --prefix libtool)/bin"   >> "$GITHUB_PATH"
+          echo "$(brew --prefix curl)/bin"      >> "$GITHUB_PATH"
+          autoconf --version | head -1
+          automake --version | head -1
+
+      - name: "Locate Android NDK ${{ env.NDK_VERSION_SHORT }}"
+        id: ndk
+        run: |
+          # On macOS the NDK is NOT pre-installed — download it
+          NDK_DIR="/tmp/android-ndk-${{ env.NDK_VERSION_SHORT }}"
+          if [[ ! -d "${NDK_DIR}" ]]; then
+            curl -fSL --retry 3 \
+              "https://dl.google.com/android/repository/android-ndk-${{ env.NDK_VERSION_SHORT }}-darwin.zip" \
+              -o /tmp/ndk.zip
+            unzip -q /tmp/ndk.zip -d /tmp
+          fi
+          TC="${NDK_DIR}/toolchains/llvm/prebuilt/darwin-x86_64"
+          echo "toolchain=${TC}" >> "$GITHUB_OUTPUT"
+          echo "TERMUX_STANDALONE_TOOLCHAIN=${TC}" >> "$GITHUB_ENV"
+          echo "NDK toolchain: ${TC}"
+          "${TC}/bin/clang" --version | head -1
+
+      - name: "Build python ${{ env.PYTHON_VERSION }} (${{ matrix.arch }}, API ${{ matrix.api }})"
+        env:
+          TERMUX_ARCH:          "${{ matrix.arch }}"
+          TERMUX_PKG_API_LEVEL: "${{ matrix.api }}"
+          TERMUX_PREFIX:        "${{ env.INSTALL_ROOT }}"
+          BUILD_ROOT:           "${{ env.BUILD_ROOT }}"
+          GITHUB_ACTIONS:       "true"
+        run: |
+          set -euxo pipefail
+          bash cpython/bee/build.sh
+
+      # macOS does not produce a .deb — upload the install tree instead
+      - name: "Upload install tree (macOS)"
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: "python_${{ env.PYTHON_VERSION }}_${{ matrix.arch }}_api${{ matrix.api }}-macos"
+          path: "${{ env.INSTALL_ROOT }}/"
+          retention-days: 14
+
+      - name: "Upload install tree (on failure)"
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: "debug-install-${{ matrix.arch }}-api${{ matrix.api }}-macos"
+          path: "${{ env.INSTALL_ROOT }}/"
+          retention-days: 5
+
+  # ---------------------------------------------------------------------------
+  # §4  Windows cross-compile (MSYS2 on Windows 2025)
+  #
+  # MSYS2 provides autoconf, automake, libtool in its package repository.
+  # All steps run inside the MSYS2 MINGW64 shell.
+  # No .deb is produced (fakeroot + dpkg-deb are Linux-only).
+  # ---------------------------------------------------------------------------
+  build-windows:
+    name: "Windows  ${{ matrix.arch }} / API ${{ matrix.api }}"
+    needs: matrix-config
+    runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.matrix-config.outputs.windows-matrix) }}
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: "Checkout (branch: master)"
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 1
+
+      - name: "Set up MSYS2"
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            base-devel
+            autoconf
+            automake
+            libtool
+            pkg-config
+            curl
+            unzip
+            xz
+            python3
+
+      - name: "Verify host build tools (MSYS2)"
+        run: |
+          autoconf --version | head -1
+          automake --version | head -1
+          libtool  --version | head -1
+
+      - name: "Download Android NDK ${{ env.NDK_VERSION_SHORT }}"
+        run: |
+          NDK_DIR="/tmp/android-ndk-${{ env.NDK_VERSION_SHORT }}"
+          if [[ ! -d "${NDK_DIR}" ]]; then
+            curl -fSL --retry 3 \
+              "https://dl.google.com/android/repository/android-ndk-${{ env.NDK_VERSION_SHORT }}-windows.zip" \
+              -o /tmp/ndk.zip
+            unzip -q /tmp/ndk.zip -d /tmp
+          fi
+          TC="${NDK_DIR}/toolchains/llvm/prebuilt/windows-x86_64"
+          echo "TERMUX_STANDALONE_TOOLCHAIN=${TC}" >> "$GITHUB_ENV"
+          echo "NDK toolchain: ${TC}"
+
+      - name: "Build python ${{ env.PYTHON_VERSION }} (${{ matrix.arch }}, API ${{ matrix.api }})"
+        env:
+          TERMUX_ARCH:          "${{ matrix.arch }}"
+          TERMUX_PKG_API_LEVEL: "${{ matrix.api }}"
+          TERMUX_PREFIX:        "${{ env.INSTALL_ROOT }}"
+          BUILD_ROOT:           "${{ env.BUILD_ROOT }}"
+          GITHUB_ACTIONS:       "true"
+        run: |
+          set -euxo pipefail
+          bash cpython/bee/build.sh
+
+      - name: "Upload install tree (Windows)"
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: "python_${{ env.PYTHON_VERSION }}_${{ matrix.arch }}_api${{ matrix.api }}-windows"
+          path: "${{ env.INSTALL_ROOT }}/"
+          retention-days: 14
+
+      - name: "Upload install tree (on failure)"
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: "debug-install-${{ matrix.arch }}-api${{ matrix.api }}-windows"
+          path: "${{ env.INSTALL_ROOT }}/"
+          retention-days: 5
+
+  # ---------------------------------------------------------------------------
+  # §5  Structural verification of .deb artefacts
+  #
+  # Runs after all Linux builds succeed.  Downloads each .deb and verifies:
+  #   • DEBIAN/control is present and well-formed
+  #   • python3.13 binary exists
+  #   • python3 symlink exists
+  #   • bare "python" does NOT exist (intentional)
+  #   • site-packages/README.md is present
+  #   • _crypt, _ssl, _sqlite3, zlib modules exist
+  # ---------------------------------------------------------------------------
+  verify:
+    name: "Verify .deb (${{ matrix.arch }}, API ${{ matrix.api }})"
+    needs: build-linux
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-14]
-
-    permissions:
-      contents: write   # required only for release upload
+        arch: ["aarch64", "arm", "i686", "x86_64"]
+        api:  [24, 35]
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Setup Java 17
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v4
-        with:
-          packages: "ndk;${{ env.NDK_VERSION }}"
-          log-accepted-android-sdk-licenses: true
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install meson ninja
-
-      - name: Build (build.sh)
-        env:
-          CROSS_TARGET: ${{ github.event.inputs.cross_target }}
-          API_LEVEL: ${{ env.ANDROID_API }}
-        run: |
-          chmod +x ./bee/build.sh
-          ./bee/build.sh
-
-      - name: List artifacts
-        run: |
-          ls -lah
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-${{ matrix.os }}
-          path: |
-            *.deb
-            build/*.deb
-            **/*.deb
-
-  release:
-    name: Create Release
-    runs-on: ubuntu-latest
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/')
-
-    permissions:
-      contents: write
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Download artifacts
+      - name: "Download .deb artefact"
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          name: "python_${{ env.PYTHON_VERSION }}_${{ matrix.arch }}_api${{ matrix.api }}-linux"
+          path: debs/
 
-      - name: Prepare release files
+      - name: "Install dpkg tools"
+        run: sudo apt-get install -y --no-install-recommends dpkg
+
+      - name: "Verify .deb structure"
         run: |
-          mkdir -p release
-          find artifacts -name "*.deb" -exec cp {} release/ \;
+          set -euo pipefail
+          DEB="$(ls debs/python_*.deb | head -1)"
+          echo "Inspecting: ${DEB}"
+          echo ""
 
-      - name: Create GitHub Release and upload assets
+          # Basic dpkg-deb checks
+          dpkg-deb --info "${DEB}"
+          echo ""
+
+          CONTENTS="$(dpkg-deb --contents "${DEB}")"
+          echo "${CONTENTS}" | head -40
+          echo ""
+
+          # ── Mandatory file checks ─────────────────────────────────────────
+          fail=0
+
+          check() {
+            local label="$1" pattern="$2" invert="${3:-}"
+            if [[ -n "${invert}" ]]; then
+              if echo "${CONTENTS}" | grep -qF "${pattern}"; then
+                echo "✗ FAIL: ${label} — should NOT be present: ${pattern}"
+                fail=$(( fail + 1 ))
+              else
+                echo "✓ OK:   ${label}"
+              fi
+            else
+              if echo "${CONTENTS}" | grep -qF "${pattern}"; then
+                echo "✓ OK:   ${label}"
+              else
+                echo "✗ FAIL: ${label} — not found: ${pattern}"
+                fail=$(( fail + 1 ))
+              fi
+            fi
+          }
+
+          check "python3.13 binary"            "bin/python3.13"
+          check "python3 symlink"              "bin/python3"
+          check "bare 'python' absent"         "bin/python" "invert"
+          check "site-packages/README.md"      "site-packages/README.md"
+          check "_ssl extension module"        "lib-dynload/_ssl"
+          check "_sqlite3 extension module"    "lib-dynload/_sqlite3"
+          check "zlib extension module"        "lib-dynload/zlib"
+          check "_crypt extension module"      "lib-dynload/_crypt"
+
+          # ── Control file checks ───────────────────────────────────────────
+          CTRL="$(dpkg-deb --field "${DEB}")"
+
+          for field in Package Version Architecture Maintainer Description; do
+            if echo "${CTRL}" | grep -q "^${field}:"; then
+              echo "✓ OK:   control field ${field}"
+            else
+              echo "✗ FAIL: control field ${field} missing"
+              fail=$(( fail + 1 ))
+            fi
+          done
+
+          # Architecture must not be "all" (this is arch-specific)
+          ARCH_FIELD="$(echo "${CTRL}" | grep '^Architecture:' | cut -d' ' -f2)"
+          if [[ "${ARCH_FIELD}" == "all" ]]; then
+            echo "✗ FAIL: Architecture field is 'all' — should be arch-specific"
+            fail=$(( fail + 1 ))
+          else
+            echo "✓ OK:   Architecture = ${ARCH_FIELD}"
+          fi
+
+          echo ""
+          if (( fail == 0 )); then
+            echo "✅  All ${fail} checks passed."
+          else
+            echo "❌  ${fail} check(s) failed."
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------------
+  # §6  Release — attach all .deb files to a GitHub Release on tag push
+  #
+  # Only runs when a version tag (v*) is pushed to master.
+  # Waits for all Linux builds AND the verify job to succeed first.
+  # ---------------------------------------------------------------------------
+  release:
+    name: "GitHub Release"
+    needs: [build-linux, verify]
+    runs-on: ubuntu-24.04
+    # Only run on tag pushes — not on PRs or branch pushes
+    if: >
+      github.event_name == 'push' &&
+      startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write   # needed to create and upload release assets
+
+    steps:
+      - name: "Checkout (branch: master)"
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 1
+
+      - name: "Download all .deb artefacts"
+        uses: actions/download-artifact@v4
+        with:
+          # Match all Linux .deb artefact names
+          pattern: "python_*-linux"
+          path: release-debs/
+          merge-multiple: true
+
+      - name: "List release assets"
+        run: |
+          echo "Files to release:"
+          ls -lh release-debs/
+
+      - name: "Create GitHub Release and upload .deb files"
         uses: softprops/action-gh-release@v2
         with:
-          files: release/*.deb
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          tag_name:    "${{ github.ref_name }}"
+          name:        "Python ${{ env.PYTHON_VERSION }} for Android — ${{ github.ref_name }}"
+          draft:       false
+          prerelease:  ${{ contains(github.ref_name, '-') }}
+          body: |
+            ## Python ${{ env.PYTHON_VERSION }} Android Build
+
+            Pre-built `.deb` packages for Termux/Android, covering all 4 ABIs
+            and API levels 21 – 36.
+
+            ### Installation
+
+            ```bash
+            dpkg -i python_${{ env.PYTHON_VERSION }}_<arch>.deb
+            ```
+
+            Replace `<arch>` with your device's architecture:
+            - `aarch64` — 64-bit ARM (most modern Android devices)
+            - `arm`     — 32-bit ARM
+            - `x86_64`  — 64-bit x86
+            - `i686`    — 32-bit x86
+
+            ### Notes
+
+            - Installed as `python3.13` and `python3`.
+              The bare `python` command is intentionally **not** provided.
+            - Bundled: OpenSSL, ncurses, readline, libxcrypt, tcl, tk.
+            - API level is encoded in the artefact name (e.g. `api35`).
+              Pick the highest API level your device supports.
+
+            ### Checksums
+
+            ```
+            $(cd release-debs && sha256sum *.deb)
+            ```
+          files: "release-debs/python_*.deb"
