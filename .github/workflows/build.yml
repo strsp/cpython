@@ -67,10 +67,11 @@ jobs:
           pip install meson ninja
 
       - name: Build (build.sh)
+        env:
+          CROSS_TARGET: ${{ github.event.inputs.cross_target }}
+          API_LEVEL: ${{ env.ANDROID_API }}
         run: |
           chmod +x ./build.sh
-          export API_LEVEL=${{ env.ANDROID_API }}
-          export CROSS_TARGET=${{ github.event.inputs.cross_target }}
           ./build.sh
 
       - name: List artifacts
