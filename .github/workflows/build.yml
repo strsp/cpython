@@ -2,147 +2,177 @@ name: Tests
 
 on:
   push:
-    branches:
-      - master
+    branches: [main]
   pull_request:
-    branches:
-      - master
   workflow_dispatch:
-    inputs:
-      cross_target:
-        description: 'CROSS_TARGET (e.g. aarch64-linux-android34)'
-        required: false
-        default: 'aarch64-linux-android34'
+  release:
+    types: [created]
 
+# ✅ Concurrency control
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 env:
-  NDK_VERSION: "27.3.13750724"
-  CROSS_TARGET: ${{ github.event.inputs.cross_target || 'aarch64-linux-android34' }}
+  API_LEVEL: 34
+  NDK_VERSION: 27.2.12479018
+  BUILD_ROOT: ${{ github.workspace }}/.build
+  TERMUX_PREFIX: ${{ github.workspace }}/install
 
 jobs:
-  Tests:
-    name: aarch64
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
+
+# ─────────────────────────────────────────────
+# 🍏 macOS (aarch64)
+# ─────────────────────────────────────────────
+  macos-aarch64:
+    name: macOS aarch64
+    runs-on: macos-14
 
     steps:
-      - name: Checkout CPython
-        uses: actions/checkout@v6
-        with:
-          persist-credentials: false
+      - uses: actions/checkout@v4
 
+      # ☕ Java 17
       - name: Set up Java 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Python 3.13
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.13'
-
+      # 📱 Android SDK + NDK
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
         with:
           packages: "ndk;${{ env.NDK_VERSION }}"
           log-accepted-android-sdk-licenses: false
 
-      - name: Set ANDROID_HOME from ANDROID_SDK_ROOT
-        run: echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
-
-      - name: Set up build Python (host)
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.13'
-
-      - name: Run bee/regen.sh (via autoconf container)
+      - name: Install deps
         run: |
-          which python3.13
-          docker run --rm \
-            -v "${{ github.workspace }}:/work" \
-            -v "$ANDROID_HOME:$ANDROID_HOME" \
-            -w /work \
-            -e CROSS=1 \
-            -e CROSS_TARGET="$CROSS_TARGET" \
-            -e ANDROID_HOME="$ANDROID_HOME" \
-            -e ANDROID_ABI="arm64-v8a" \
-            -e ANDROID_CMAKE_TOOLCHAIN_FILE="$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}/build/cmake/android.toolchain.cmake" \
-            ghcr.io/python/autoconf:2024.10.16.11360930377 \
-            bash -c "
-              apt-get update -qq &&
-              apt-get install -y --no-install-recommends \
-                wget cmake make python3 python3-dev ninja-build build-essential autoconf automake libtool pkg-config git m4
-            "
-            export BUILD_DIR="/usr"
-            sudo ./.github/workflows/posix-deps-apt.sh
-            ./configure --prefix="$BUILD_DIR"
-            sudo make -j8 install
-            dirname "$BUILD_DIR" || true
-            echo "$BUILD_DIR"
-            bash bee/regen.sh all
-      - name: Verify regen outputs
-        run: |
-          fail=0
-          for variant in bionic termux official; do
-            f="bee/$variant/pyconfig/pyconfig.h"
-            if [ -f "$f" ]; then
-              echo "OK: $f"
-            else
-              echo "MISSING: $f"; fail=1
-            fi
-          done
-          # f="bee/darwin/pyconfig/pyconfig.h"
-          # if [ -f "$f" ]; then
-          #   echo "OK: $f"
-          # else
-          #  echo "MISSING: $f"; fail=1
-          # fi
-          if [ -d "bee/Python/frozen_modules" ]; then
-            echo "OK: bee/Python/frozen_modules"
-          else
-            echo "MISSING: bee/Python/frozen_modules"; fail=1
-          fi
-          if [ -f "bee/bionic/config.c" ]; then
-            echo "OK: bee/bionic/config.c"
-          else
-            echo "MISSING: bee/bionic/config.c"; fail=1
-          fi
-          [ $fail -eq 0 ] || { echo "One or more regen outputs missing."; exit 1; }
-          echo "All regen outputs verified."
+          brew update
+          brew install autoconf automake libtool pkg-config ccache
 
-      - name: Run android.py ci --fast-ci
+      - name: Enable ccache
+        run: |
+          echo "CC=ccache clang" >> $GITHUB_ENV
+          echo "CXX=ccache clang++" >> $GITHUB_ENV
+
+      - name: Build
         env:
-          HOST: aarch64-linux-android
-          ANDROID_API_LEVEL: "34"
-          CFLAGS_BIONIC: "-D__BIONIC_NO_PAGE_SIZE_MACRO"
-          LDFLAGS_PYTHON: "-Wl,--no-undefined"
+          TERMUX_ARCH: aarch64
+          TERMUX_PKG_API_LEVEL: ${{ env.API_LEVEL }}
+          TERMUX_STANDALONE_TOOLCHAIN: $ANDROID_SDK_ROOT/ndk/${{ env.NDK_VERSION }}/toolchains/llvm/prebuilt/darwin-x86_64
+          GITHUB_ACTIONS: "true"
+          CFLAGS: "-O3 -flto -fvisibility=hidden"
+          LDFLAGS: "-flto -Wl,-z,relro,-z,now"
+        run: bash cpython/bee/build.sh
+
+      - name: Test
+        run: ./install/bin/python3 -c "import ssl, sqlite3, bz2, lzma, curses"
+
+      - name: Upload install
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-aarch64-macos
+          path: install/
+
+# ─────────────────────────────────────────────
+# 🐧 Linux builds (.deb)
+# ─────────────────────────────────────────────
+  linux:
+    name: Linux ${{ matrix.arch }}
+    runs-on: ubuntu-22.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [aarch64, arm, i686, x86_64]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ☕ Java 17
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # 📱 Android SDK + NDK
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "ndk;${{ env.NDK_VERSION }}"
+          log-accepted-android-sdk-licenses: false
+
+      # ⚡ Cache
+      - name: Cache build
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build
+            ~/.ccache
+          key: build-${{ matrix.arch }}-api34-${{ hashFiles('cpython/bee/build.sh') }}
+          restore-keys: |
+            build-${{ matrix.arch }}-api34-
+
+      - name: Install deps
         run: |
-          python3 Android/android.py ci --fast-ci aarch64-linux-android
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            build-essential curl xz-utils \
+            autoconf automake libtool pkg-config \
+            python3 python3-dev fakeroot dpkg ccache
 
-      - name: Upload regen artifacts
-        uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: bee-regen-${{ env.CROSS_TARGET }}
-          path: |
-            bee/bionic/pyconfig/pyconfig.h
-            bee/termux/pyconfig/pyconfig.h
-            bee/official/pyconfig/pyconfig.h
-            bee/bionic/config.c
-            bee/Python/frozen_modules/
-          retention-days: 7
+      - name: Enable ccache
+        run: |
+          echo "CC=ccache clang" >> $GITHUB_ENV
+          echo "CXX=ccache clang++" >> $GITHUB_ENV
 
-      - name: Upload test results
-        uses: actions/upload-artifact@v7
-        if: always()
+      - name: Build
+        env:
+          TERMUX_ARCH: ${{ matrix.arch }}
+          TERMUX_PKG_API_LEVEL: ${{ env.API_LEVEL }}
+          TERMUX_STANDALONE_TOOLCHAIN: $ANDROID_SDK_ROOT/ndk/${{ env.NDK_VERSION }}/toolchains/llvm/prebuilt/linux-x86_64
+          GITHUB_ACTIONS: "true"
+          CFLAGS: "-O3 -flto -fvisibility=hidden"
+          LDFLAGS: "-flto -Wl,-z,relro,-z,now"
+        run: bash cpython/bee/build.sh
+
+      - name: Test
+        run: ./install/bin/python3 -c "import ssl, sqlite3, bz2, lzma, curses"
+
+      - name: Verify .deb
+        run: |
+          deb=$(ls .build/python_*.deb | head -1)
+          dpkg-deb --info "$deb"
+          dpkg-deb --contents "$deb" | grep python3
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: android-ci-results-aarch64
-          path: |
-            Android/build/aarch64-linux-android/testresults/
-            Android/build/aarch64-linux-android/Makefile
-          retention-days: 14
+          name: deb-${{ matrix.arch }}
+          path: .build/python_*.deb
+
+# ─────────────────────────────────────────────
+# 🚀 Release Upload
+# ─────────────────────────────────────────────
+  release:
+    name: Upload to GitHub Release
+    needs: linux
+    runs-on: ubuntu-22.04
+    if: github.event_name == 'release'
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: debs
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: debs/**/*.deb
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
