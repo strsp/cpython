@@ -147,7 +147,7 @@ jobs:
     steps:
       # ── 1. Source ───────────────────────────────────────────────────────────
       - name: "Checkout (branch: master)"
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: master
           fetch-depth: 1
@@ -157,7 +157,7 @@ jobs:
       # Cache downloaded dep tarballs (not the built artefacts — those are arch-
       # specific).  Key includes the dep versions from build.sh to auto-invalidate.
       - name: "Cache downloaded dep sources"
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.BUILD_ROOT }}/deps
           key: |
@@ -230,7 +230,7 @@ jobs:
 
       # ── 6. Upload .deb ──────────────────────────────────────────────────────
       - name: "Upload .deb artefact"
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: success()
         with:
           name: "python_${{ env.PYTHON_VERSION }}_${{ matrix.arch }}_api${{ matrix.api }}-linux"
@@ -240,7 +240,7 @@ jobs:
 
       # ── 7. Upload install tree on failure (for debugging) ──────────────────
       - name: "Upload install tree (on failure)"
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: "debug-install-${{ matrix.arch }}-api${{ matrix.api }}-linux"
@@ -249,7 +249,7 @@ jobs:
 
       # ── 8. Upload build logs on failure ─────────────────────────────────────
       - name: "Upload build logs (on failure)"
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: "debug-logs-${{ matrix.arch }}-api${{ matrix.api }}-linux"
@@ -273,14 +273,14 @@ jobs:
 
     steps:
       - name: "Checkout (branch: master)"
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: master
           fetch-depth: 1
           persist-credentials: false
 
       - name: "Cache downloaded dep sources"
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.BUILD_ROOT }}/deps
           key: |
@@ -333,7 +333,7 @@ jobs:
 
       # macOS does not produce a .deb — upload the install tree instead
       - name: "Upload install tree (macOS)"
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: success()
         with:
           name: "python_${{ env.PYTHON_VERSION }}_${{ matrix.arch }}_api${{ matrix.api }}-macos"
@@ -341,7 +341,7 @@ jobs:
           retention-days: 14
 
       - name: "Upload install tree (on failure)"
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: "debug-install-${{ matrix.arch }}-api${{ matrix.api }}-macos"
@@ -368,7 +368,7 @@ jobs:
 
     steps:
       - name: "Checkout (branch: master)"
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: master
           fetch-depth: 1
@@ -421,7 +421,7 @@ jobs:
           bash bee/build.sh
 
       - name: "Upload install tree (Windows)"
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: success()
         with:
           name: "python_${{ env.PYTHON_VERSION }}_${{ matrix.arch }}_api${{ matrix.api }}-windows"
@@ -429,7 +429,7 @@ jobs:
           retention-days: 14
 
       - name: "Upload install tree (on failure)"
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: "debug-install-${{ matrix.arch }}-api${{ matrix.api }}-windows"
@@ -459,7 +459,7 @@ jobs:
 
     steps:
       - name: "Download .deb artefact"
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: "python_${{ env.PYTHON_VERSION }}_${{ matrix.arch }}_api${{ matrix.api }}-linux"
           path: debs/
@@ -561,14 +561,14 @@ jobs:
 
     steps:
       - name: "Checkout (branch: master)"
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: master
           fetch-depth: 1
           persist-credentials: false
 
       - name: "Download all .deb artefacts"
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           # Match all Linux .deb artefact names
           pattern: "python_*-linux"
